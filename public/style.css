@@ -129,17 +129,17 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   display: grid; place-items: center; overflow: hidden;
 }
 #table-center {
-  display: flex; flex-direction: column; align-items: center; gap: 10px;
-  z-index: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  z-index: 1; pointer-events: none;
 }
 #pot-display {
-  background: rgba(20, 12, 0, .85);
-  border: 1px solid rgba(255,204,77,.35);
-  padding: 8px 22px;
+  background: rgba(20, 12, 0, .9);
+  border: 1px solid rgba(255,204,77,.5);
+  padding: 10px 24px;
   border-radius: 999px;
   font-weight: 800;
   color: var(--gold);
-  font-size: 17px;
+  font-size: 18px;
   letter-spacing: .5px;
   white-space: nowrap;
   box-shadow: 0 6px 22px rgba(0,0,0,.55);
@@ -162,35 +162,21 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
 .board-label { font-size: 10px; color: var(--muted); text-align: center; margin-bottom: 2px; }
 #board2-wrap { margin-top: 4px; }
 
-/* Hand strength badge (yours) */
-#hand-strength {
-  background: linear-gradient(180deg, rgba(255,204,77,.18), rgba(255,204,77,.06));
-  border: 1px solid rgba(255,204,77,.5);
-  color: var(--gold);
-  padding: 5px 14px;
-  border-radius: 999px;
-  font-weight: 800;
-  font-size: 12px;
-  letter-spacing: .8px;
-  text-transform: uppercase;
-  white-space: nowrap;
-  box-shadow: 0 4px 14px rgba(0,0,0,.35);
-}
-
 #seats { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+
 .seat {
   position: absolute; width: 124px; transform: translate(-50%, -50%);
   pointer-events: auto;
   background: rgba(10,20,16,.94); border: 2px solid var(--line);
   border-radius: 12px; padding: 6px 6px 8px; text-align: center;
   font-size: 12px;
-  transition: box-shadow .2s, opacity .35s, filter .35s;
+  transition: box-shadow .2s, opacity .35s, filter .35s, border-color .2s;
   overflow: hidden;
 }
-.seat.turn { border-color: var(--gold); box-shadow: 0 0 22px rgba(255,204,77,.7); }
-.seat.folded { opacity: .28; filter: grayscale(.75); }
-.seat.folded .hole .card { opacity: .55; }
-.seat.winner { border-color: var(--green); box-shadow: 0 0 24px rgba(47,191,113,.65); }
+.seat.turn { border-color: var(--gold); box-shadow: 0 0 22px rgba(255,204,77,.75); }
+.seat.folded { opacity: .28; filter: grayscale(.8); }
+.seat.folded .hole .card { opacity: .5; }
+.seat.winner { border-color: var(--green); box-shadow: 0 0 24px rgba(47,191,113,.7); }
 .seat.winner::before {
   content: '🏆'; position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
   font-size: 15px;
@@ -199,8 +185,15 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   content: '👑'; position: absolute; top: -12px; right: 6px;
   font-size: 13px;
 }
-.seat.winner.admin::before { content: '🏆'; }
-.seat.winner.admin::after  { content: '👑'; }
+
+/* Hero seat (viewer's own seat) — bigger, always at the bottom */
+.seat.hero {
+  border-color: rgba(255,204,77,.55);
+  background: linear-gradient(180deg, rgba(15,30,22,.98), rgba(10,20,16,.98));
+  box-shadow: 0 10px 30px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,204,77,.15);
+  z-index: 5;
+}
+.seat.hero.turn { box-shadow: 0 0 28px rgba(255,204,77,.85), 0 0 0 2px rgba(255,204,77,.35); }
 
 .seat .name { font-weight: 700; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .seat .chips { color: var(--gold); font-weight: 800; font-size: 13px; margin: 1px 0; }
@@ -208,6 +201,7 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
 .seat .hole .card { width: 32px; height: 46px; font-size: 12px; }
 .seat .hole .card .s { font-size: 15px; }
 .seat .hole .card .r { font-size: 9px; }
+
 .seat .bet {
   position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%);
   background: var(--gold); color: #221800; padding: 2px 8px; border-radius: 999px;
@@ -215,16 +209,25 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   z-index: 3;
 }
 .seat .badge { position: absolute; top: 4px; left: 6px; font-size: 9px; color: var(--muted); letter-spacing: 1px; font-weight: 700; }
-.seat .last { font-size: 10px; color: var(--muted); margin-top: 2px; min-height: 12px; }
+.seat .last { font-size: 10px; color: var(--muted); margin-top: 3px; min-height: 12px; }
 .seat .offline { color: var(--red); font-size: 10px; }
+
+/* Hand-rank chip on the seat */
 .seat .seat-rank {
-  margin-top: 3px; font-size: 9px; letter-spacing: .5px;
-  color: var(--gold); font-weight: 800; text-transform: uppercase;
-  background: rgba(255,204,77,.1);
+  margin-top: 4px;
+  font-size: 9px;
+  letter-spacing: .5px;
+  color: #221800;
+  background: linear-gradient(180deg,#ffd35c,#e1a63e);
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 2px 8px;
   border-radius: 999px;
-  padding: 1px 6px;
   display: inline-block;
+  box-shadow: 0 2px 6px rgba(0,0,0,.4);
+  white-space: nowrap;
 }
+.seat.hero .seat-rank { font-size: 10px; padding: 3px 10px; }
 
 .seat .timer-bar {
   position: absolute;
@@ -269,10 +272,7 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
 .tab-pane { position: absolute; inset: 0; overflow-y: auto; padding: 12px; display: none; -webkit-overflow-scrolling: touch; }
 .tab-pane.active { display: block; }
 
-.sec-title {
-  font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
-  color: var(--muted); margin: 14px 0 8px; font-weight: 700;
-}
+.sec-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 14px 0 8px; font-weight: 700; }
 .sec-title:first-child { margin-top: 0; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
 .grid2 label { font-size: 11px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
@@ -342,10 +342,9 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   padding: 4px 10px; border-radius: 999px; background: var(--panel-2);
   border: 1px solid var(--line);
   text-transform: uppercase; letter-spacing: .5px;
+  white-space: nowrap;
 }
 #actions .act-info b { color: var(--gold); }
-
-/* Reveal-hand button (shown only during showdown) */
 #actions .reveal-btn { background: linear-gradient(180deg,#4b9ae1,#2e6fc0); color: #fff; border: none; }
 
 /* ── Modals ── */
@@ -407,7 +406,6 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
 
 /* ══════════ MOBILE (≤ 880px) ══════════ */
 @media (max-width: 880px) {
-  /* Switch to flex so the action bar can be pinned */
   #game {
     display: flex;
     flex-direction: column;
@@ -422,11 +420,9 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
     flex: 1 1 auto;
     min-height: 0;
     padding: 6px;
-    /* reserve room for the fixed action bar */
     padding-bottom: calc(var(--actions-h) + var(--safe-b) + 6px);
   }
 
-  /* Turn the panel into an off-canvas drawer */
   #panel {
     position: fixed;
     top: 0; right: 0; bottom: 0;
@@ -455,9 +451,8 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   .card .s { font-size: 20px; }
   .cards { gap: 4px; }
 
-  #pot-display { font-size: 14px; padding: 6px 16px; }
+  #pot-display { font-size: 15px; padding: 7px 18px; }
   #table-center { gap: 10px; }
-  #hand-strength { font-size: 11px; padding: 4px 12px; }
 
   .seat {
     width: 92px; padding: 5px 4px 7px;
@@ -469,47 +464,4 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   .seat .hole .card { width: 24px; height: 34px; }
   .seat .hole .card .s { font-size: 11px; }
   .seat .hole .card .r { font-size: 7px; top: 1px; left: 2px; }
-  .seat .bet { font-size: 10px; padding: 1px 6px; bottom: -18px; }
-  .seat .badge { font-size: 8px; top: 3px; left: 4px; }
-  .seat .last { font-size: 9px; }
-  .seat .seat-rank { font-size: 8px; padding: 1px 5px; }
-
-  .hide-sm { display: none; }
-
-  /* ── Action bar pinned to bottom of viewport ── */
-  #actions {
-    position: fixed;
-    left: 0; right: 0; bottom: 0;
-    z-index: 40;
-    padding: 8px 8px calc(8px + var(--safe-b));
-    gap: 5px;
-    min-height: var(--actions-h);
-    flex-wrap: wrap;
-    align-content: center;
-    border-top: 1px solid var(--line);
-    box-shadow: 0 -6px 20px rgba(0,0,0,.5);
-    background: var(--panel);
-  }
-  #actions .btn {
-    min-width: 58px; padding: 11px 8px; font-size: 13px;
-    flex: 1 1 0; flex-basis: 0;
-  }
-  #actions .raise-group { flex: 1 1 100%; order: -1; max-width: none; }
-  #actions .raise-group input { padding: 10px; font-size: 14px; }
-  #actions .hint { font-size: 12px; }
-  #actions .act-info { font-size: 10px; padding: 3px 8px; }
-
-  #toasts { left: auto; right: 10px; bottom: calc(var(--actions-h) + var(--safe-b) + 8px); top: auto; }
-
-  .modal-box { padding: 18px; }
-  .modal-actions .btn { flex: 1 1 30%; min-width: 70px; }
-}
-
-@media (max-width: 380px) {
-  .seat { width: 78px; }
-  .seat .hole .card { width: 20px; height: 28px; }
-  .card { width: 34px; height: 50px; }
-  .card .s { font-size: 17px; }
-  #actions .btn { font-size: 12px; padding: 10px 4px; }
-  #pot-display { font-size: 13px; padding: 5px 12px; }
-}
+  .seat .bet { font-size: 10px; padding: 
