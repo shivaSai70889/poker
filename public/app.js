@@ -5,6 +5,18 @@ let ME = null;
 let CODE = null;
 let S = null;
 let myName = '';
+let lastTurnId = null;
+
+/* ── Persistent client id (so reload = same player) ── */
+function getClientId() {
+  let id = localStorage.getItem('poker_client_id');
+  if (!id) {
+    id = 'c' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    localStorage.setItem('poker_client_id', id);
+  }
+  return id;
+}
+const CLIENT_ID = getClientId();
 
 const RANK_SYM = { s:'♠', h:'♥', d:'♦', c:'♣' };
 const cardHTML = (c) => {
@@ -21,9 +33,11 @@ function msg(t) { $('lobby-msg').textContent = t; }
 $('btn-create').onclick = () => {
   myName = $('in-name').value.trim();
   if (!myName) return msg('Please enter your name.');
-  socket.emit('create_room', { name: myName }, (res) => {
+  socket.emit('create_room', { name: myName, clientId: CLIENT_ID }, (res) => {
     if (!res.ok) return msg(res.err);
+    localStorage.setItem('poker_name', myName);
     enterGame(res.code, res.id);
+    showShareModal(res.code);
   });
 };
 $('btn-join').onclick = () => {
@@ -31,8 +45,9 @@ $('btn-join').onclick = () => {
   if (!myName) return msg('Please enter your name.');
   const code = $('in-code').value.toUpperCase().trim();
   if (code.length !== 4) return msg('Code must be 4 characters.');
-  socket.emit('join_room', { code, name: myName }, (res) => {
+  socket.emit('join_room', { code, name: myName, clientId: CLIENT_ID }, (res) => {
     if (!res.ok) return msg(res.err);
+    localStorage.setItem('poker_name', myName);
     enterGame(res.code, res.id);
   });
 };
@@ -47,13 +62,72 @@ function enterGame(code, id) {
   history.replaceState(null, '', '?room=' + code);
 }
 
-const urlRoom = new URLSearchParams(location.search).get('room');
-if (urlRoom) $('in-code').value = urlRoom.toUpperCase();
+/* Restore name from localStorage */
 window.addEventListener('load', () => {
   const saved = localStorage.getItem('poker_name');
-  if (saved && !$('in-name').value) $('in-name').value = saved;
+  if (saved) {
+    if ($('in-name')) $('in-name').value = saved;
+    if ($('quick-name')) $('quick-name').value = saved;
+    myName = saved;
+  }
+
+  // URL room → quick join flow OR auto-resume
+  const urlRoom = new URLSearchParams(location.search).get('room');
+  if (urlRoom) {
+    const code = urlRoom.toUpperCase();
+    // Show quick-join UI
+    $('lobby-full').classList.add('hidden');
+    $('lobby-quick').classList.remove('hidden');
+    $('quick-code').textContent = code;
+    // Peek room info
+    socket.emit('peek_room', { code }, (res) => {
+      if (res.ok) {
+        $('quick-hint').textContent = `Min initial buy-in: ${res.minBuyin} · Blinds ${res.sb}/${res.bb}`;
+        $('quick-buyin').value = res.minBuyin;
+      } else {
+        $('quick-hint').textContent = res.err || 'Table not found.';
+      }
+    });
+
+    // If we already have a session for this room, auto-resume
+    if (ME || localStorage.getItem('poker_name')) {
+      // Try auto-resume silently. If it succeeds we jump straight into game.
+      const guess = saved || '';
+      if (guess) {
+        socket.emit('join_room', { code, name: guess, clientId: CLIENT_ID }, (res) => {
+          if (res.ok && res.resumed) {
+            localStorage.setItem('poker_name', guess);
+            enterGame(res.code, res.id);
+          }
+          // else: stay on lobby (quick-join) so they can enter name / buy-in
+        });
+      }
+    }
+  }
 });
-$('in-name').addEventListener('change', e => localStorage.setItem('poker_name', e.target.value));
+
+/* Quick join (from invite link) */
+$('btn-quick-join').onclick = () => {
+  const code = new URLSearchParams(location.search).get('room');
+  if (!code) return;
+  const name = ($('quick-name').value || '').trim();
+  const amount = Math.floor(+$('quick-buyin').value);
+  if (!name) return msg('Please enter your name.');
+  if (!amount || amount <= 0) return msg('Enter a valid buy-in amount.');
+  socket.emit('join_room', { code: code.toUpperCase(), name, clientId: CLIENT_ID }, (res) => {
+    if (!res.ok) return msg(res.err);
+    localStorage.setItem('poker_name', name);
+    myName = name;
+    enterGame(res.code, res.id);
+    // Then request buy-in
+    socket.emit('request_buyin', { amount });
+    toast('Buy-in requested — waiting for admin.');
+  });
+};
+$('btn-quick-cancel').onclick = () => {
+  history.replaceState(null, '', location.pathname);
+  location.reload();
+};
 
 /* ══════════ STATE ══════════ */
 socket.on('state', (state) => {
@@ -73,6 +147,22 @@ socket.on('game_ended', (state) => {
   render();
   showFinalLedger();
 });
+
+/* ══════════ SHARE MODAL ══════════ */
+function showShareModal(code) {
+  const url = location.origin + '/?room=' + code;
+  $('share-url').value = url;
+  $('modal-share').classList.remove('hidden');
+  if (navigator.share) $('share-native').classList.remove('hidden');
+  else $('share-native').classList.add('hidden');
+}
+$('share-copy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('share-url').value); toast('Link copied!'); } catch {}
+};
+$('share-native').onclick = async () => {
+  try { await navigator.share({ title: 'Join my poker table', url: $('share-url').value }); } catch {}
+};
+$('share-close').onclick = () => $('modal-share').classList.add('hidden');
 
 /* ══════════ DRAWER ══════════ */
 const panel = $('panel');
@@ -102,8 +192,9 @@ function toast(t) {
   setTimeout(() => d.remove(), 4000);
 }
 
-/* ══════════ SHARE LINK ══════════ */
+/* ══════════ SHARE ══════════ */
 $('btn-share').onclick = async () => {
+  if (!CODE) return;
   const url = location.origin + '/?room=' + CODE;
   try {
     if (navigator.share) await navigator.share({ title: 'Join my poker table', url });
@@ -169,6 +260,15 @@ function render() {
 
   renderBoard();
   renderSeats();
+
+  // Auto-close mobile drawer when it becomes our turn
+  if (S.turnId !== lastTurnId) {
+    lastTurnId = S.turnId;
+    if (S.turnId === ME && window.matchMedia('(max-width: 880px)').matches) {
+      closeDrawer();
+    }
+  }
+
   renderPlayerList();
   renderPending();
   renderAdminSettings();
@@ -190,7 +290,12 @@ function renderBoard() {
   } else {
     $('board2-wrap').classList.add('hidden');
   }
-  $('pot-display').textContent = S.pot > 0 ? `Pot ${S.pot}` : '';
+  if (S.pot > 0) {
+    $('pot-display').textContent = `POT · ${S.pot}`;
+    $('pot-display').classList.remove('hidden');
+  } else {
+    $('pot-display').classList.add('hidden');
+  }
 }
 
 function seatPos(i, n) {
@@ -203,9 +308,13 @@ function seatPos(i, n) {
 
 function renderSeats() {
   const seats = $('seats');
+  seats.classList.toggle('paused', S.paused);
   seats.innerHTML = '';
   const players = S.players.filter(p => p.seated);
   const n = players.length;
+  const timerSecs = S.settings.timer;
+  const inHandPhase = ['preflop','flop','turn','river'].includes(S.phase);
+
   players.forEach((p, i) => {
     const pos = seatPos(i, n);
     const d = document.createElement('div');
@@ -219,6 +328,10 @@ function renderSeats() {
     if (p.id === ME) badges.push('YOU');
     if (p.away) badges.push('AWAY');
     if (p.allIn) badges.push('ALL-IN');
+
+    // Show timer bar only on active turn during a hand
+    const showTimer = p.isTurn && inHandPhase && timerSecs > 0 && !S.paused;
+
     d.innerHTML = `
       <div class="badge">${badges.join(' · ')}</div>
       <div class="name">${escapeHTML(p.name)}</div>
@@ -227,6 +340,7 @@ function renderSeats() {
       ${p.bet > 0 ? `<div class="bet">${p.bet}</div>` : ''}
       <div class="last">${p.lastAction || ''}</div>
       ${!p.connected ? '<div class="offline">offline</div>' : ''}
+      ${showTimer ? `<div class="timer-bar" style="animation-duration:${timerSecs}s"></div>` : ''}
     `;
     seats.appendChild(d);
   });
@@ -286,7 +400,7 @@ function renderAdminSettings() {
   if (document.activeElement !== $('set-ante')) $('set-ante').value = s.ante;
   if (document.activeElement !== $('set-timer')) $('set-timer').value = s.timer;
   if (document.activeElement !== $('set-maxseats')) $('set-maxseats').value = s.maxSeats;
-  $('set-sb').value = s.sb; // readonly display
+  $('set-sb').value = s.sb;
   $('btn-rit').style.background = S.runItTwiceArmed ? 'var(--gold)' : '';
   $('btn-rit').style.color = S.runItTwiceArmed ? '#221800' : '';
   $('btn-bomb').style.background = S.bombNext ? 'var(--gold)' : '';
@@ -337,7 +451,6 @@ function renderActionBar() {
     return;
   }
   if (S.phase === 'waiting' || S.phase === 'showdown') {
-    // Only show "Start game" for the very first hand
     if (S.handNumber === 0 && S.adminId === ME) {
       const b = document.createElement('button');
       b.className = 'btn primary';
@@ -360,16 +473,13 @@ function renderActionBar() {
     return;
   }
 
-  // ── Our turn: Fold / Check-Call / Raise / All-in ──
+  // ── Our turn ──
   const toCall = S.currentBet - me.bet;
   const minRaiseTo = S.currentBet + S.minRaise;
   const maxRaiseTo = me.chips + me.bet;
 
-  // Fold
-  const foldBtn = btn('Fold', () => socket.emit('player_action', { type: 'fold' }), 'danger');
-  bar.appendChild(foldBtn);
+  bar.appendChild(btn('Fold', () => socket.emit('player_action', { type: 'fold' }), 'danger'));
 
-  // Check or Call
   if (toCall <= 0) {
     bar.appendChild(btn('Check', () => socket.emit('player_action', { type: 'check' })));
   } else {
@@ -377,7 +487,6 @@ function renderActionBar() {
     bar.appendChild(btn(`Call ${callAmt}`, () => socket.emit('player_action', { type: 'call' })));
   }
 
-  // Raise group (integer only)
   const rg = document.createElement('div');
   rg.className = 'raise-group';
 
@@ -389,9 +498,7 @@ function renderActionBar() {
   input.max = maxRaiseTo;
   input.value = Math.min(minRaiseTo, maxRaiseTo);
   input.addEventListener('input', () => {
-    // Force integer
-    const v = input.value.replace(/[^\d]/g, '');
-    input.value = v;
+    input.value = input.value.replace(/[^\d]/g, '');
   });
   input.addEventListener('blur', () => {
     let v = Math.floor(+input.value) || minRaiseTo;
@@ -412,7 +519,6 @@ function renderActionBar() {
   rg.appendChild(raiseBtn);
   bar.appendChild(rg);
 
-  // All-in
   bar.appendChild(btn('All-in', () => socket.emit('player_action', { type: 'raise', amount: maxRaiseTo }), 'primary'));
 }
 
