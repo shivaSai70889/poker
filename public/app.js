@@ -7,7 +7,7 @@ let S = null;
 let myName = '';
 let lastTurnId = null;
 
-/* ── Persistent client id (so reload = same player) ── */
+/* Persistent client id */
 function getClientId() {
   let id = localStorage.getItem('poker_client_id');
   if (!id) {
@@ -62,7 +62,6 @@ function enterGame(code, id) {
   history.replaceState(null, '', '?room=' + code);
 }
 
-/* Restore name from localStorage */
 window.addEventListener('load', () => {
   const saved = localStorage.getItem('poker_name');
   if (saved) {
@@ -71,15 +70,12 @@ window.addEventListener('load', () => {
     myName = saved;
   }
 
-  // URL room → quick join flow OR auto-resume
   const urlRoom = new URLSearchParams(location.search).get('room');
   if (urlRoom) {
     const code = urlRoom.toUpperCase();
-    // Show quick-join UI
     $('lobby-full').classList.add('hidden');
     $('lobby-quick').classList.remove('hidden');
     $('quick-code').textContent = code;
-    // Peek room info
     socket.emit('peek_room', { code }, (res) => {
       if (res.ok) {
         $('quick-hint').textContent = `Min initial buy-in: ${res.minBuyin} · Blinds ${res.sb}/${res.bb}`;
@@ -89,24 +85,16 @@ window.addEventListener('load', () => {
       }
     });
 
-    // If we already have a session for this room, auto-resume
-    if (ME || localStorage.getItem('poker_name')) {
-      // Try auto-resume silently. If it succeeds we jump straight into game.
-      const guess = saved || '';
-      if (guess) {
-        socket.emit('join_room', { code, name: guess, clientId: CLIENT_ID }, (res) => {
-          if (res.ok && res.resumed) {
-            localStorage.setItem('poker_name', guess);
-            enterGame(res.code, res.id);
-          }
-          // else: stay on lobby (quick-join) so they can enter name / buy-in
-        });
-      }
+    if (saved) {
+      socket.emit('join_room', { code, name: saved, clientId: CLIENT_ID }, (res) => {
+        if (res.ok && res.resumed) {
+          enterGame(res.code, res.id);
+        }
+      });
     }
   }
 });
 
-/* Quick join (from invite link) */
 $('btn-quick-join').onclick = () => {
   const code = new URLSearchParams(location.search).get('room');
   if (!code) return;
@@ -119,7 +107,6 @@ $('btn-quick-join').onclick = () => {
     localStorage.setItem('poker_name', name);
     myName = name;
     enterGame(res.code, res.id);
-    // Then request buy-in
     socket.emit('request_buyin', { amount });
     toast('Buy-in requested — waiting for admin.');
   });
@@ -211,7 +198,6 @@ socket.on('buyin_request_popup', (data) => {
   approveQueue.push(data);
   maybeShowApprove();
 });
-
 function maybeShowApprove() {
   if (!$('modal-approve').classList.contains('hidden')) return;
   if (approveQueue.length === 0) return;
@@ -261,7 +247,6 @@ function render() {
   renderBoard();
   renderSeats();
 
-  // Auto-close mobile drawer when it becomes our turn
   if (S.turnId !== lastTurnId) {
     lastTurnId = S.turnId;
     if (S.turnId === ME && window.matchMedia('(max-width: 880px)').matches) {
@@ -296,6 +281,19 @@ function renderBoard() {
   } else {
     $('pot-display').classList.add('hidden');
   }
+
+  // Hand strength for me
+  const me = S.players.find(p => p.id === ME);
+  const hs = $('hand-strength');
+  if (me && me.handRank) {
+    hs.textContent = me.handRank;
+    hs.classList.remove('hidden');
+  } else if (me && me.preflop) {
+    hs.textContent = me.preflop;
+    hs.classList.remove('hidden');
+  } else {
+    hs.classList.add('hidden');
+  }
 }
 
 function seatPos(i, n) {
@@ -322,6 +320,7 @@ function renderSeats() {
     if (p.isTurn) d.classList.add('turn');
     if (p.folded) d.classList.add('folded');
     if (p.isAdmin) d.classList.add('admin');
+    if (p.isWinner && (S.phase === 'showdown' || S.phase === 'ended')) d.classList.add('winner');
     d.style.left = pos.x + '%';
     d.style.top = pos.y + '%';
     const badges = [];
@@ -329,8 +328,13 @@ function renderSeats() {
     if (p.away) badges.push('AWAY');
     if (p.allIn) badges.push('ALL-IN');
 
-    // Show timer bar only on active turn during a hand
     const showTimer = p.isTurn && inHandPhase && timerSecs > 0 && !S.paused;
+
+    // Small rank label (only shown for the viewer, or everyone after showdown)
+    let rankLabel = '';
+    if (p.id === ME && p.handRank && !p.folded) rankLabel = p.handRank;
+    else if (p.id === ME && p.preflop && !p.folded && S.phase === 'preflop') rankLabel = p.preflop;
+    else if (p.revealed && p.handRank) rankLabel = p.handRank;
 
     d.innerHTML = `
       <div class="badge">${badges.join(' · ')}</div>
@@ -339,6 +343,7 @@ function renderSeats() {
       <div class="hole">${p.hole.map(cardHTML).join('')}</div>
       ${p.bet > 0 ? `<div class="bet">${p.bet}</div>` : ''}
       <div class="last">${p.lastAction || ''}</div>
+      ${rankLabel ? `<div class="seat-rank">${escapeHTML(rankLabel)}</div>` : ''}
       ${!p.connected ? '<div class="offline">offline</div>' : ''}
       ${showTimer ? `<div class="timer-bar" style="animation-duration:${timerSecs}s"></div>` : ''}
     `;
@@ -450,7 +455,38 @@ function renderActionBar() {
     bar.innerHTML = '<span class="hint">⏸ Table paused by admin. Waiting for resume…</span>';
     return;
   }
-  if (S.phase === 'waiting' || S.phase === 'showdown') {
+
+  // ── Showdown window ──
+  if (S.phase === 'showdown') {
+    // Winner info
+    const winners = S.players.filter(p => p.isWinner);
+    let info = '';
+    if (winners.length) {
+      info = `<span class="act-info">🏆 <b>${winners.map(w => escapeHTML(w.name)).join(', ')}</b> win</span>`;
+    } else {
+      info = '<span class="act-info">Hand complete</span>';
+    }
+
+    // Reveal button if I was in the hand and haven't revealed
+    const meWon = me && me.isWinner;
+    const canReveal = me && me.inHand === false && !me.revealed && me.hole && me.hole.length === 2 && me.hole[0] !== '??';
+    // Actually "inHand" is now false; use a different check — was I dealt in this hand?
+    // Simplest: if I have 2 hole cards and I'm not a winner and not revealed
+    const iWasDealt = me && me.hole && me.hole.length === 2;
+    const showRevealBtn = iWasDealt && !me.revealed && !meWon;
+
+    bar.appendChild(el('span', info));
+    if (showRevealBtn) {
+      const b = document.createElement('button');
+      b.className = 'btn reveal-btn';
+      b.textContent = '👁 Show my hand';
+      b.onclick = () => socket.emit('reveal_hand');
+      bar.appendChild(b);
+    }
+    return;
+  }
+
+  if (S.phase === 'waiting') {
     if (S.handNumber === 0 && S.adminId === ME) {
       const b = document.createElement('button');
       b.className = 'btn primary';
@@ -478,6 +514,11 @@ function renderActionBar() {
   const minRaiseTo = S.currentBet + S.minRaise;
   const maxRaiseTo = me.chips + me.bet;
 
+  // Hand strength hint
+  if (me.handRank || me.preflop) {
+    bar.appendChild(el('span', `<span class="act-info">You have <b>${escapeHTML(me.handRank || me.preflop)}</b></span>`));
+  }
+
   bar.appendChild(btn('Fold', () => socket.emit('player_action', { type: 'fold' }), 'danger'));
 
   if (toCall <= 0) {
@@ -489,7 +530,6 @@ function renderActionBar() {
 
   const rg = document.createElement('div');
   rg.className = 'raise-group';
-
   const input = document.createElement('input');
   input.type = 'number';
   input.inputMode = 'numeric';
@@ -497,9 +537,7 @@ function renderActionBar() {
   input.min = minRaiseTo;
   input.max = maxRaiseTo;
   input.value = Math.min(minRaiseTo, maxRaiseTo);
-  input.addEventListener('input', () => {
-    input.value = input.value.replace(/[^\d]/g, '');
-  });
+  input.addEventListener('input', () => input.value = input.value.replace(/[^\d]/g, ''));
   input.addEventListener('blur', () => {
     let v = Math.floor(+input.value) || minRaiseTo;
     v = Math.max(minRaiseTo, Math.min(maxRaiseTo, v));
@@ -522,6 +560,11 @@ function renderActionBar() {
   bar.appendChild(btn('All-in', () => socket.emit('player_action', { type: 'raise', amount: maxRaiseTo }), 'primary'));
 }
 
+function el(tag, html) {
+  const e = document.createElement(tag);
+  e.innerHTML = html;
+  return e;
+}
 function btn(label, cb, variant) {
   const b = document.createElement('button');
   b.className = 'btn' + (variant ? ' ' + variant : '');
