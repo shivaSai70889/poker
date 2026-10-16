@@ -11,7 +11,6 @@
 </head>
 <body>
 
-<!-- ══════════ LOBBY ══════════ -->
 <div id="lobby" class="screen">
   <div class="lobby-card">
     <div class="logo">♠ <span>Home Poker</span> ♦</div>
@@ -39,7 +38,6 @@
   </div>
 </div>
 
-<!-- ══════════ GAME ══════════ -->
 <div id="game" class="screen hidden">
 
   <header id="topbar">
@@ -107,17 +105,16 @@
 
         <div class="sec-title">Table settings</div>
         <div class="grid2">
-          <label>Small blind<input id="set-sb" type="number" min="1" step="1" /></label>
-          <label>Big blind<input id="set-bb" type="number" min="1" step="1" /></label>
+          <label>Big blind<input id="set-bb" type="number" min="2" step="1" /></label>
+          <label>Small blind (auto)<input id="set-sb" type="number" readonly /></label>
           <label>Min initial buy-in<input id="set-min" type="number" min="1" step="1" /></label>
           <label>Bomb-pot ante<input id="set-ante" type="number" min="0" step="1" /></label>
-          <label>Turn timer (s)<input id="set-timer" type="number" min="0" step="5" /></label>
+          <label>Turn timer (s)<input id="set-timer" type="number" min="0" step="1" /></label>
           <label>Max seats<input id="set-maxseats" type="number" min="2" max="10" step="1" /></label>
         </div>
         <button id="btn-save-settings" class="btn small full">Apply settings</button>
 
         <div class="sec-title">Actions</div>
-        <button id="btn-next" class="btn small full green">▶ Deal next hand</button>
         <div class="btn-row">
           <button id="btn-bomb" class="btn small">💣 Bomb pot</button>
           <button id="btn-rit" class="btn small">🔁 Run it twice</button>
@@ -133,8 +130,6 @@
     </div>
   </aside>
 </div>
-
-<!-- ══════════ MODALS ══════════ -->
 
 <div id="modal-buyin" class="modal hidden">
   <div class="modal-box">
