@@ -81,16 +81,16 @@ function cmpRank(a, b) {
   }
   return 0;
 }
-// Describe a 2-card preflop hand loosely (for display only)
 function preflopLabel(hole) {
   if (!hole || hole.length < 2) return null;
   const r1 = hole[0][0], r2 = hole[1][0];
   const s1 = hole[0][1], s2 = hole[1][1];
   const high = RV[r1] >= RV[r2] ? r1 : r2;
   const low  = RV[r1] >= RV[r2] ? r2 : r1;
-  if (r1 === r2) return `Pocket ${r1 === 'T' ? '10' : r1}s`;
-  const suited = s1 === s2 ? 'suited' : 'offsuit';
-  return `${high}${low} ${suited}`;
+  const H = high === 'T' ? '10' : high;
+  const L = low === 'T' ? '10' : low;
+  if (r1 === r2) return `Pocket ${H}s`;
+  return `${H}${L} ${s1 === s2 ? 'suited' : 'offsuit'}`;
 }
 
 /* ─────────────── ROOM ─────────────── */
@@ -125,7 +125,7 @@ class Room {
     this.autoDealTimer = null;
     this.endingAfterHand = false;
     this.wentToShowdown = false;
-    this.lastWinners = []; // ids
+    this.lastWinners = [];
   }
   get sb() { return Math.floor(this.settings.bb / 2); }
   get bb() { return this.settings.bb; }
@@ -170,9 +170,7 @@ function roomSnapshot(room, viewerId) {
   const winners = new Set(room.lastWinners || []);
 
   const players = [...room.players.values()].map(p => {
-    // What rank does this player currently have?
-    let handRank = null;
-    let preflop = null;
+    let handRank = null, preflop = null;
     if (p.hole && p.hole.length === 2) {
       if (room.board.length >= 3 && ['flop','turn','river'].includes(room.phase)) {
         const r = rank7([...p.hole, ...room.board]);
@@ -184,12 +182,6 @@ function roomSnapshot(room, viewerId) {
         handRank = r ? r.name : null;
       }
     }
-
-    // Who gets to see this player's cards?
-    // - the player themselves
-    // - winner after showdown
-    // - anyone who revealed after showdown
-    // - everyone after game ended (for ledger review)
     const showHole =
       p.id === viewerId ||
       (isShowdown && p.revealed) ||
@@ -215,9 +207,10 @@ function roomSnapshot(room, viewerId) {
       buyIns: p.buyIns,
       pendingBuyin: p.pendingBuyin,
       revealed: !!p.revealed,
+      atShowdown: !!p.atShowdown,
       isWinner: winners.has(p.id),
-      handRank,   // string like "Two Pair" (only meaningful for the viewer postflop)
-      preflop     // string like "AK suited" (only for viewer preflop)
+      handRank,
+      preflop
     };
   });
 
@@ -349,6 +342,7 @@ function startNewHand(room) {
     p.hole = []; p.folded = false; p.allIn = false;
     p.bet = 0; p.handContrib = 0; p.lastAction = null;
     p.revealed = false;
+    p.atShowdown = false;
     p.inHand = p.seated && !p.away && !p.out && p.chips > 0;
   }
   const inHand = room.inHandPlayers();
@@ -387,7 +381,6 @@ function startNewHand(room) {
   }
 
   advanceTurnIfNeeded(room, true);
-
   room.addLog(`▶ Hand #${room.handNumber} — dealer: ${room.players.get(room.dealerId).name} — blinds ${room.sb}/${room.bb}`);
   startTurnTimer(room);
   broadcast(room);
@@ -405,10 +398,8 @@ function postBet(room, player, amount, label) {
 function advanceTurnIfNeeded(room, fresh = false) {
   const inHand = room.inHandPlayers();
   if (!inHand.length) { endBettingRound(room); return; }
-
   const startIdx = room.turnId ? inHand.findIndex(p => p.id === room.turnId) : -1;
   const offset = fresh ? 0 : 1;
-
   for (let i = 0; i < inHand.length; i++) {
     const p = inHand[(startIdx + i + offset + inHand.length) % inHand.length];
     if (p.folded || p.allIn) continue;
@@ -454,7 +445,6 @@ function handleAction(room, playerId, action) {
     awardPotTo(room, remaining[0], 'last player standing');
     return;
   }
-
   if (room.canAct().length === 0) return runOutBoard(room);
 
   advanceTurnIfNeeded(room, false);
@@ -488,7 +478,6 @@ function endBettingRound(room) {
   const dIdx = order.findIndex(p => p.id === room.dealerId);
   room.turnId = order[(dIdx + 1) % order.length].id;
   advanceTurnIfNeeded(room, true);
-
   if (room.canAct().length <= 1) return runOutBoard(room);
   startTurnTimer(room);
   broadcast(room);
@@ -509,6 +498,10 @@ function showdown(room) {
   room.wentToShowdown = true;
   const alive = room.notFolded();
 
+  // ★ Mark atShowdown
+  for (const p of room.players.values()) p.atShowdown = false;
+  for (const p of alive) p.atShowdown = true;
+
   const results = alive.map(p => ({
     id: p.id, name: p.name, hole: p.hole,
     rank: rank7([...p.hole, ...room.board]),
@@ -517,7 +510,6 @@ function showdown(room) {
 
   room.buildPots();
   const pots = room.pots.length ? room.pots : [{ amount: room.livePot(), eligible: alive.map(p => p.id) }];
-
   const payouts = {};
   const summary = [];
 
@@ -526,12 +518,10 @@ function showdown(room) {
       const elig = results.filter(r => pot.eligible.includes(r.id));
       const half = Math.floor(pot.amount / 2);
       const rest = pot.amount - half;
-
       const best1 = elig.reduce((a,b)=> cmpRank(a.rank, b.rank) >= 0 ? a : b);
       const winners1 = elig.filter(r => cmpRank(r.rank, best1.rank) === 0);
       const share1 = Math.floor(half / winners1.length);
       winners1.forEach(w => payouts[w.id] = (payouts[w.id]||0) + share1);
-
       const best2 = elig.reduce((a,b)=> cmpRank(a.rank2, b.rank2) >= 0 ? a : b);
       const winners2 = elig.filter(r => cmpRank(r.rank2, best2.rank2) === 0);
       const share2 = Math.floor(rest / winners2.length);
@@ -559,14 +549,9 @@ function showdown(room) {
     room.players.get(best.id).chips += leftover;
   }
 
-  // Determine winners
   const winnerIds = Object.keys(payouts).filter(id => payouts[id] > 0);
   room.lastWinners = winnerIds;
-
-  // Auto-reveal winners only; everyone else can reveal via button
-  for (const p of room.players.values()) {
-    p.revealed = winnerIds.includes(p.id);
-  }
+  for (const p of room.players.values()) p.revealed = winnerIds.includes(p.id);
 
   for (const r of results) {
     const win = payouts[r.id] || 0;
@@ -590,12 +575,10 @@ function showdown(room) {
 
   broadcast(room);
 
-  // 6-second reveal window, then move on
   clearTimeout(room.autoDealTimer);
   room.autoDealTimer = setTimeout(() => {
     room.phase = 'waiting';
     if (room.endingAfterHand) { emitGameEnded(room); return; }
-    // Reset reveal flags for next hand
     for (const p of room.players.values()) p.revealed = false;
     broadcast(room);
     scheduleAutoDeal(room, 500);
@@ -608,7 +591,8 @@ function awardPotTo(room, winner, reason) {
   winner.chips += total;
   room.addLog(`💵 ${winner.name} wins ${total} (${reason}).`);
 
-  // Reveal winner only (they didn't have to show, so we don't reveal losers either)
+  for (const p of room.players.values()) p.atShowdown = false;
+  winner.atShowdown = true;
   room.lastWinners = [winner.id];
   for (const p of room.players.values()) p.revealed = (p.id === winner.id);
 
@@ -650,7 +634,7 @@ function makePlayer(id, socketId, name, clientId) {
     chips: 0, seated: true, away: false, leaveAfterHand: false,
     inHand: false, folded: false, allIn: false, bet: 0, handContrib: 0,
     hole: [], lastAction: null, buyIns: [], pendingBuyin: null, out: false,
-    connected: true, revealed: false
+    connected: true, revealed: false, atShowdown: false
   };
 }
 
@@ -662,11 +646,8 @@ io.on('connection', socket => {
     const room = rooms.get((code || '').toUpperCase().trim());
     if (!room) return cb({ ok: false, err: 'Table not found.' });
     cb({
-      ok: true,
-      bb: room.settings.bb,
-      sb: room.sb,
-      minBuyin: room.settings.minBuyin,
-      maxSeats: room.settings.maxSeats,
+      ok: true, bb: room.settings.bb, sb: room.sb,
+      minBuyin: room.settings.minBuyin, maxSeats: room.settings.maxSeats,
       players: room.players.size
     });
   });
@@ -705,7 +686,6 @@ io.on('connection', socket => {
         return;
       }
     }
-
     if (room.players.size >= room.settings.maxSeats)
       return cb({ ok: false, err: 'Table is full.' });
     name = (name || '').trim().slice(0, 14);
@@ -744,7 +724,6 @@ io.on('connection', socket => {
       return socket.emit('toast', `Min initial buy-in is ${myRoom.settings.minBuyin}.`);
 
     p.pendingBuyin = amount;
-
     if (p.id === myRoom.adminId) {
       p.chips += amount;
       p.buyIns.push(amount);
@@ -846,12 +825,11 @@ io.on('connection', socket => {
     handleAction(myRoom, myId, action);
   });
 
-  // Reveal own hand after showdown
   socket.on('reveal_hand', () => {
     if (!myRoom || !myId) return;
     if (myRoom.phase !== 'showdown') return;
     const p = myRoom.players.get(myId);
-    if (!p || p.revealed) return;
+    if (!p || p.revealed || !p.atShowdown) return;
     p.revealed = true;
     myRoom.addLog(`${p.name} showed their hand.`);
     broadcast(myRoom);
