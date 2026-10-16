@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
 <meta name="theme-color" content="#0b3d2e" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
 <title>Home Poker</title>
 <link rel="stylesheet" href="style.css" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♠</text></svg>" />
@@ -26,31 +27,31 @@
     <div class="or"><span>or join with a code</span></div>
 
     <div class="join-row">
-      <input id="in-code" type="text" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false" />
+      <input id="in-code" type="text" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false" inputmode="text" />
       <button id="btn-join" class="btn">Join →</button>
     </div>
 
     <div id="lobby-msg" class="msg"></div>
 
     <div class="lobby-foot">
-      🔒 Cards are shuffled with <code>crypto.randomInt</code> (OS CSPRNG) — no seeded algorithm.
+      🔒 Cards shuffled with <code>crypto.randomInt</code> — OS CSPRNG, not a seeded algorithm.
     </div>
   </div>
 </div>
 
 <!-- ══════════ GAME ══════════ -->
 <div id="game" class="screen hidden">
+
   <header id="topbar">
-    <div class="tb-left">
-      <span class="brand">♠</span>
-      <button id="btn-share" class="pill-btn" title="Copy invite link">🔗 <b id="tb-code">----</b></button>
-      <span class="pill hide-sm" id="tb-blinds">–/–</span>
-      <span class="pill hide-sm" id="tb-hand">Hand –</span>
-    </div>
-    <div class="tb-right">
-      <span class="pill warn hidden" id="tb-paused">⏸ PAUSED</span>
-      <span class="pill" id="tb-you">–</span>
-    </div>
+    <button id="btn-menu" class="icon-btn" aria-label="Menu">☰</button>
+    <span class="brand">♠</span>
+    <button id="btn-share" class="pill-btn" title="Copy invite link">🔗 <b id="tb-code">----</b></button>
+    <span class="pill hide-sm" id="tb-blinds">–/–</span>
+    <span class="pill hide-sm" id="tb-hand">Hand –</span>
+    <span class="spacer"></span>
+    <button id="btn-rebuy-top" class="icon-btn" title="Buy-in">💰</button>
+    <span class="pill warn hidden" id="tb-paused">⏸</span>
+    <span class="pill" id="tb-you">–</span>
   </header>
 
   <main>
@@ -67,77 +68,102 @@
         <div id="seats"></div>
       </div>
     </section>
-
-    <aside id="panel">
-      <div class="tabs">
-        <button class="tab active" data-tab="players">Players</button>
-        <button class="tab" data-tab="admin">Admin</button>
-        <button class="tab" data-tab="ledger">Ledger</button>
-        <button class="tab" data-tab="log">Log</button>
-      </div>
-
-      <div class="tab-body">
-        <div class="tab-pane active" id="pane-players">
-          <div id="player-list" class="list"></div>
-          <div class="quick-actions">
-            <button id="btn-away" class="btn small">Away / Back</button>
-            <button id="btn-leave" class="btn small ghost">Leave seat</button>
-            <button id="btn-rebuy" class="btn small green">Buy-in</button>
-          </div>
-        </div>
-
-        <div class="tab-pane" id="pane-admin">
-          <div id="admin-notice" class="notice hidden">Only the table admin can use these controls.</div>
-
-          <div id="pending-wrap" class="hidden">
-            <div class="sec-title">Buy-in requests</div>
-            <div id="pending-list"></div>
-          </div>
-
-          <div class="sec-title">Table settings</div>
-          <div class="grid2">
-            <label>Small blind<input id="set-sb" type="number" min="1" step="1" /></label>
-            <label>Big blind<input id="set-bb" type="number" min="1" step="1" /></label>
-            <label>Min initial buy-in<input id="set-min" type="number" min="1" step="1" /></label>
-            <label>Bomb-pot ante<input id="set-ante" type="number" min="0" step="1" /></label>
-            <label>Turn timer (s)<input id="set-timer" type="number" min="0" step="5" /></label>
-            <label>Max seats<input id="set-maxseats" type="number" min="2" max="10" step="1" /></label>
-          </div>
-          <button id="btn-save-settings" class="btn small full">Apply settings</button>
-
-          <div class="sec-title">Actions</div>
-          <button id="btn-next" class="btn small full green">▶ Deal next hand</button>
-          <div class="btn-row">
-            <button id="btn-bomb" class="btn small">💣 Bomb pot</button>
-            <button id="btn-rit" class="btn small">🔁 Run it twice</button>
-          </div>
-          <div class="btn-row">
-            <button id="btn-pause" class="btn small">⏸ Pause</button>
-            <button id="btn-end" class="btn small danger">■ End game</button>
-          </div>
-        </div>
-
-        <div class="tab-pane" id="pane-ledger"><div id="ledger"></div></div>
-        <div class="tab-pane" id="pane-log"><div id="log" class="log"></div></div>
-      </div>
-    </aside>
   </main>
 
   <footer id="actions"></footer>
+
+  <div id="panel-overlay"></div>
+  <aside id="panel">
+    <div class="drawer-head">
+      <span>Table menu</span>
+      <button id="btn-drawer-close" class="icon-btn" aria-label="Close">✕</button>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="players">Players</button>
+      <button class="tab" data-tab="admin">Admin</button>
+      <button class="tab" data-tab="ledger">Ledger</button>
+      <button class="tab" data-tab="log">Log</button>
+    </div>
+
+    <div class="tab-body">
+      <div class="tab-pane active" id="pane-players">
+        <div class="quick-actions">
+          <button id="btn-away" class="btn small">Away / Back</button>
+          <button id="btn-leave" class="btn small ghost">Leave seat</button>
+          <button id="btn-rebuy" class="btn small green">Buy-in</button>
+        </div>
+        <div class="sec-title">At the table <span id="seat-count" class="muted"></span></div>
+        <div id="player-list" class="list"></div>
+      </div>
+
+      <div class="tab-pane" id="pane-admin">
+        <div id="admin-notice" class="notice hidden">Only the table admin can use these controls.</div>
+
+        <div id="pending-wrap" class="hidden">
+          <div class="sec-title">Buy-in requests</div>
+          <div id="pending-list"></div>
+        </div>
+
+        <div class="sec-title">Table settings</div>
+        <div class="grid2">
+          <label>Small blind<input id="set-sb" type="number" min="1" step="1" /></label>
+          <label>Big blind<input id="set-bb" type="number" min="1" step="1" /></label>
+          <label>Min initial buy-in<input id="set-min" type="number" min="1" step="1" /></label>
+          <label>Bomb-pot ante<input id="set-ante" type="number" min="0" step="1" /></label>
+          <label>Turn timer (s)<input id="set-timer" type="number" min="0" step="5" /></label>
+          <label>Max seats<input id="set-maxseats" type="number" min="2" max="10" step="1" /></label>
+        </div>
+        <button id="btn-save-settings" class="btn small full">Apply settings</button>
+
+        <div class="sec-title">Actions</div>
+        <button id="btn-next" class="btn small full green">▶ Deal next hand</button>
+        <div class="btn-row">
+          <button id="btn-bomb" class="btn small">💣 Bomb pot</button>
+          <button id="btn-rit" class="btn small">🔁 Run it twice</button>
+        </div>
+        <div class="btn-row">
+          <button id="btn-pause" class="btn small">⏸ Pause</button>
+          <button id="btn-end" class="btn small danger">■ End game</button>
+        </div>
+      </div>
+
+      <div class="tab-pane" id="pane-ledger"><div id="ledger"></div></div>
+      <div class="tab-pane" id="pane-log"><div id="log" class="log"></div></div>
+    </div>
+  </aside>
 </div>
 
-<!-- MODALS -->
+<!-- ══════════ MODALS ══════════ -->
+
 <div id="modal-buyin" class="modal hidden">
   <div class="modal-box">
     <h3>Buy in</h3>
     <p class="muted" id="buyin-info"></p>
     <div class="quick-row" id="buyin-quick"></div>
     <label class="field"><span>Amount</span>
-      <input id="buyin-amount" type="number" min="1" step="1" />
+      <input id="buyin-amount" type="number" min="1" step="1" inputmode="numeric" />
     </label>
     <div class="modal-actions">
       <button id="buyin-cancel" class="btn ghost">Cancel</button>
       <button id="buyin-send" class="btn primary">Request buy-in</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-approve" class="modal hidden">
+  <div class="modal-box">
+    <div class="approve-icon">💰</div>
+    <h3>Buy-in request</h3>
+    <p class="approve-line">
+      <b id="approve-name">Player</b> wants to buy in for
+      <span class="amt"><b id="approve-amount">0</b></span>
+    </p>
+    <p class="muted" id="approve-sub"></p>
+    <div class="modal-actions">
+      <button id="approve-later" class="btn ghost">Later</button>
+      <button id="approve-reject" class="btn danger">Reject</button>
+      <button id="approve-accept" class="btn primary">Approve</button>
     </div>
   </div>
 </div>
