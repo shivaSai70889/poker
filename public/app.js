@@ -70,21 +70,15 @@ socket.on('toast', (t) => toast(t));
 socket.on('game_ended', (state) => {
   S = state;
   closeDrawer();
+  render();
   showFinalLedger();
 });
 
-/* ══════════ DRAWER (mobile menu) ══════════ */
+/* ══════════ DRAWER ══════════ */
 const panel = $('panel');
 const overlay = $('panel-overlay');
-
-function openDrawer() {
-  panel.classList.add('open');
-  overlay.classList.add('open');
-}
-function closeDrawer() {
-  panel.classList.remove('open');
-  overlay.classList.remove('open');
-}
+function openDrawer()  { panel.classList.add('open'); overlay.classList.add('open'); }
+function closeDrawer() { panel.classList.remove('open'); overlay.classList.remove('open'); }
 $('btn-menu').onclick = openDrawer;
 $('btn-drawer-close').onclick = closeDrawer;
 overlay.onclick = closeDrawer;
@@ -139,12 +133,10 @@ function maybeShowApprove() {
   $('modal-approve').dataset.playerId = next.playerId;
   $('modal-approve').classList.remove('hidden');
 }
-
 function closeApproveModal() {
   $('modal-approve').classList.add('hidden');
   setTimeout(maybeShowApprove, 120);
 }
-
 $('approve-accept').onclick = () => {
   const id = $('modal-approve').dataset.playerId;
   socket.emit('admin_resolve_buyin', { playerId: id, approve: true });
@@ -170,7 +162,7 @@ function render() {
 
   $('tb-code').textContent = S.code;
   $('tb-blinds').textContent = `${S.settings.sb}/${S.settings.bb}`;
-  $('tb-hand').textContent = `#${S.handNumber} · ${S.phase}`;
+  $('tb-hand').textContent = S.phase === 'ended' ? 'Ended' : `#${S.handNumber} · ${S.phase}`;
   $('tb-you').textContent = me ? `${me.name} · ${me.chips}` : '–';
   $('tb-paused').classList.toggle('hidden', !S.paused);
   $('btn-pause').textContent = S.paused ? '▶ Resume' : '⏸ Pause';
@@ -289,21 +281,25 @@ function renderPending() {
 
 function renderAdminSettings() {
   const s = S.settings;
-  if (document.activeElement !== $('set-sb')) $('set-sb').value = s.sb;
   if (document.activeElement !== $('set-bb')) $('set-bb').value = s.bb;
   if (document.activeElement !== $('set-min')) $('set-min').value = s.minBuyin;
   if (document.activeElement !== $('set-ante')) $('set-ante').value = s.ante;
   if (document.activeElement !== $('set-timer')) $('set-timer').value = s.timer;
   if (document.activeElement !== $('set-maxseats')) $('set-maxseats').value = s.maxSeats;
+  $('set-sb').value = s.sb; // readonly display
   $('btn-rit').style.background = S.runItTwiceArmed ? 'var(--gold)' : '';
   $('btn-rit').style.color = S.runItTwiceArmed ? '#221800' : '';
   $('btn-bomb').style.background = S.bombNext ? 'var(--gold)' : '';
   $('btn-bomb').style.color = S.bombNext ? '#221800' : '';
 }
 
+$('set-bb').addEventListener('input', () => {
+  const bb = Math.floor(+$('set-bb').value) || 0;
+  $('set-sb').value = Math.max(1, Math.floor(bb / 2));
+});
+
 $('btn-save-settings').onclick = () => {
   socket.emit('admin_settings', {
-    sb: +$('set-sb').value,
     bb: +$('set-bb').value,
     minBuyin: +$('set-min').value,
     ante: +$('set-ante').value,
@@ -312,12 +308,11 @@ $('btn-save-settings').onclick = () => {
   });
   toast('Settings saved');
 };
-$('btn-next').onclick = () => { socket.emit('admin_next_hand'); closeDrawer(); };
 $('btn-bomb').onclick = () => socket.emit('admin_bomb');
-$('btn-rit').onclick = () => socket.emit('admin_rit');
+$('btn-rit').onclick  = () => socket.emit('admin_rit');
 $('btn-pause').onclick = () => socket.emit('admin_pause');
 $('btn-end').onclick = () => {
-  if (confirm('End the game for everyone? The final ledger will be shown.')) {
+  if (confirm('End the game? It will stop after the current hand finishes.')) {
     socket.emit('admin_end');
     closeDrawer();
   }
@@ -327,25 +322,32 @@ function renderLog() {
   $('log').innerHTML = S.log.map(l => `<div>${escapeHTML(l)}</div>`).join('');
 }
 
+/* ══════════ ACTION BAR ══════════ */
 function renderActionBar() {
   const bar = $('actions');
   bar.innerHTML = '';
   const me = S.players.find(p => p.id === ME);
-  const myTurn = S.turnId === ME && !S.paused;
 
+  if (S.phase === 'ended') {
+    bar.innerHTML = '<span class="hint">■ Game has ended.</span>';
+    return;
+  }
   if (S.paused) {
-    bar.innerHTML = '<span class="hint">⏸ Table paused by admin.</span>';
+    bar.innerHTML = '<span class="hint">⏸ Table paused by admin. Waiting for resume…</span>';
     return;
   }
   if (S.phase === 'waiting' || S.phase === 'showdown') {
-    if (S.adminId === ME) {
-      const btn = document.createElement('button');
-      btn.className = 'btn primary';
-      btn.textContent = '▶ Deal next hand';
-      btn.onclick = () => socket.emit('admin_next_hand');
-      bar.appendChild(btn);
+    // Only show "Start game" for the very first hand
+    if (S.handNumber === 0 && S.adminId === ME) {
+      const b = document.createElement('button');
+      b.className = 'btn primary';
+      b.textContent = '▶ Start game';
+      b.onclick = () => socket.emit('admin_start_game');
+      bar.appendChild(b);
+    } else if (S.handNumber === 0) {
+      bar.innerHTML = '<span class="hint">Waiting for admin to start the game…</span>';
     } else {
-      bar.innerHTML = '<span class="hint">Waiting for admin to deal…</span>';
+      bar.innerHTML = '<span class="hint">Dealing next hand…</span>';
     }
     return;
   }
@@ -353,39 +355,65 @@ function renderActionBar() {
     bar.innerHTML = '<span class="hint">Waiting…</span>';
     return;
   }
-  if (!myTurn) {
+  if (S.turnId !== ME) {
     bar.innerHTML = '<span class="hint">Waiting for your turn…</span>';
     return;
   }
 
+  // ── Our turn: Fold / Check-Call / Raise / All-in ──
   const toCall = S.currentBet - me.bet;
   const minRaiseTo = S.currentBet + S.minRaise;
+  const maxRaiseTo = me.chips + me.bet;
 
-  bar.appendChild(btn('Fold', () => socket.emit('player_action', { type: 'fold' }), 'danger'));
+  // Fold
+  const foldBtn = btn('Fold', () => socket.emit('player_action', { type: 'fold' }), 'danger');
+  bar.appendChild(foldBtn);
 
+  // Check or Call
   if (toCall <= 0) {
     bar.appendChild(btn('Check', () => socket.emit('player_action', { type: 'check' })));
   } else {
-    bar.appendChild(btn(`Call ${Math.min(toCall, me.chips)}`, () => socket.emit('player_action', { type: 'call' })));
+    const callAmt = Math.min(toCall, me.chips);
+    bar.appendChild(btn(`Call ${callAmt}`, () => socket.emit('player_action', { type: 'call' })));
   }
 
+  // Raise group (integer only)
   const rg = document.createElement('div');
   rg.className = 'raise-group';
+
   const input = document.createElement('input');
   input.type = 'number';
   input.inputMode = 'numeric';
+  input.step = 1;
   input.min = minRaiseTo;
-  input.max = me.chips + me.bet;
-  input.value = Math.min(minRaiseTo, me.chips + me.bet);
-  const raise = document.createElement('button');
-  raise.className = 'btn green';
-  raise.textContent = 'Raise';
-  raise.onclick = () => socket.emit('player_action', { type: 'raise', amount: +input.value });
+  input.max = maxRaiseTo;
+  input.value = Math.min(minRaiseTo, maxRaiseTo);
+  input.addEventListener('input', () => {
+    // Force integer
+    const v = input.value.replace(/[^\d]/g, '');
+    input.value = v;
+  });
+  input.addEventListener('blur', () => {
+    let v = Math.floor(+input.value) || minRaiseTo;
+    v = Math.max(minRaiseTo, Math.min(maxRaiseTo, v));
+    input.value = v;
+  });
+
+  const raiseBtn = document.createElement('button');
+  raiseBtn.className = 'btn green';
+  raiseBtn.textContent = 'Raise';
+  raiseBtn.onclick = () => {
+    let v = Math.floor(+input.value) || minRaiseTo;
+    v = Math.max(minRaiseTo, Math.min(maxRaiseTo, v));
+    socket.emit('player_action', { type: 'raise', amount: v });
+  };
+
   rg.appendChild(input);
-  rg.appendChild(raise);
+  rg.appendChild(raiseBtn);
   bar.appendChild(rg);
 
-  bar.appendChild(btn('All-in', () => socket.emit('player_action', { type: 'raise', amount: me.chips + me.bet }), 'primary'));
+  // All-in
+  bar.appendChild(btn('All-in', () => socket.emit('player_action', { type: 'raise', amount: maxRaiseTo }), 'primary'));
 }
 
 function btn(label, cb, variant) {
@@ -396,7 +424,7 @@ function btn(label, cb, variant) {
   return b;
 }
 
-/* ══════════ PLAYER QUICK ACTIONS ══════════ */
+/* ══════════ QUICK ACTIONS ══════════ */
 $('btn-away').onclick = () => socket.emit('away_toggle');
 $('btn-leave').onclick = () => {
   if (confirm('Leave the table after the current hand?')) {
@@ -405,9 +433,9 @@ $('btn-leave').onclick = () => {
   }
 };
 
-/* ══════════ BUY-IN MODAL ══════════ */
-$('btn-rebuy').onclick = () => { openBuyin(); };
-$('btn-rebuy-top').onclick = () => { openBuyin(); };
+/* ══════════ BUY-IN ══════════ */
+$('btn-rebuy').onclick = () => openBuyin();
+$('btn-rebuy-top').onclick = () => openBuyin();
 
 function openBuyin() {
   if (!S) return;
@@ -427,8 +455,8 @@ function openBuyin() {
 }
 $('buyin-cancel').onclick = () => $('modal-buyin').classList.add('hidden');
 $('buyin-send').onclick = () => {
-  const amt = +$('buyin-amount').value;
-  if (!amt || amt <= 0) return toast('Enter an amount');
+  const amt = Math.floor(+$('buyin-amount').value);
+  if (!amt || amt <= 0) return toast('Enter a whole-number amount');
   socket.emit('request_buyin', { amount: amt });
   $('modal-buyin').classList.add('hidden');
   toast('Buy-in requested — waiting for admin.');
