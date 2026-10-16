@@ -41,13 +41,15 @@
         <input id="quick-name" type="text" maxlength="14" placeholder="e.g. Arjun" autocomplete="off" />
       </label>
 
-      <label class="field">
-        <span>Buy-in amount</span>
-        <input id="quick-buyin" type="number" min="1" step="1" inputmode="numeric" />
-      </label>
-      <p class="hint-inline" id="quick-hint">Min initial buy-in will be checked on entry.</p>
+      <div id="quick-buyin-wrap">
+        <label class="field">
+          <span>Buy-in amount</span>
+          <input id="quick-buyin" type="number" min="1" step="1" inputmode="numeric" />
+        </label>
+        <p class="hint-inline" id="quick-hint">Min initial buy-in will be checked on entry.</p>
+      </div>
 
-      <button id="btn-quick-join" class="btn primary big">Join & request buy-in</button>
+      <button id="btn-quick-join" class="btn primary big">Join table</button>
       <div style="text-align:center;margin-top:12px">
         <button id="btn-quick-cancel" class="btn ghost small">← Back to lobby</button>
       </div>
@@ -79,6 +81,7 @@
     <section id="table-wrap">
       <div id="felt">
         <div id="table-center">
+          <div id="table-message" class="hidden"></div>
           <div id="pot-display" class="hidden"></div>
           <div id="board-area">
             <div id="board" class="cards"></div>
@@ -132,11 +135,12 @@
         <div class="grid2">
           <label>Big blind<input id="set-bb" type="number" min="2" step="1" /></label>
           <label>Small blind (auto)<input id="set-sb" type="number" readonly /></label>
-          <label>Min initial buy-in<input id="set-min" type="number" min="1" step="1" /></label>
+          <label>Min initial buy-in<input id="set-min" type="number" min="0" step="1" /></label>
           <label>Bomb-pot ante<input id="set-ante" type="number" min="0" step="1" /></label>
           <label>Turn timer (s)<input id="set-timer" type="number" min="0" step="1" /></label>
           <label>Max seats<input id="set-maxseats" type="number" min="2" max="10" step="1" /></label>
         </div>
+        <p class="hint-inline" style="margin-top:-6px">Set min buy-in to 0 to prompt each player to choose.</p>
         <button id="btn-save-settings" class="btn small full">Apply settings</button>
 
         <div class="sec-title">Actions</div>
@@ -183,6 +187,19 @@
     <div class="modal-actions">
       <button id="buyin-cancel" class="btn ghost">Cancel</button>
       <button id="buyin-send" class="btn primary">Request buy-in</button>
+    </div>
+  </div>
+</div>
+
+<!-- Out-of-chips modal -->
+<div id="modal-outofchips" class="modal hidden">
+  <div class="modal-box">
+    <div class="approve-icon">😵</div>
+    <h3>You're out of chips</h3>
+    <p class="muted">Rebuy to keep playing, or spectate the table.</p>
+    <div class="modal-actions">
+      <button id="ooc-spectate" class="btn ghost">👀 Spectate</button>
+      <button id="ooc-rebuy" class="btn primary">💰 Rebuy</button>
     </div>
   </div>
 </div>
