@@ -12,13 +12,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/healthz', (_, res) => res.send('ok'));
 
 const PORT = process.env.PORT || 3000;
-const rooms = new Map(); // code -> Room
+const rooms = new Map();
 
-/* ─────────────── TRUE RANDOM SHUFFLE ───────────────
-   Uses crypto.randomInt() which pulls from the OS CSPRNG
-   (/dev/urandom on Linux, BCryptGenRandom on Windows).
-   Fisher–Yates is the unbiased algorithm; the *entropy*
-   comes from the OS, not a seeded PRNG.                */
+/* ─────────────── TRUE RANDOM SHUFFLE ─────────────── */
 function secureShuffle(deck) {
   for (let i = deck.length - 1; i > 0; i--) {
     const j = crypto.randomInt(0, i + 1);
@@ -29,7 +25,6 @@ function secureShuffle(deck) {
 const SUITS = ['s', 'h', 'd', 'c'];
 const RANKS = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'];
 const RV = Object.fromEntries(RANKS.map((r, i) => [r, i + 2]));
-const SYM = { s:'♠', h:'♥', d:'♦', c:'♣' };
 
 function newDeck() {
   const d = [];
@@ -86,7 +81,7 @@ function cmpRank(a, b) {
   return 0;
 }
 
-/* ─────────────── ROOM / GAME STATE ─────────────── */
+/* ─────────────── ROOM ─────────────── */
 let idCounter = 0;
 const nextId = () => 'p' + (++idCounter) + Date.now().toString(36);
 
@@ -95,7 +90,8 @@ class Room {
     this.code = code;
     this.adminId = null;
     this.players = new Map();
-    this.settings = { sb: 1, bb: 2, minBuyin: 100, ante: 0, timer: 0, maxSeats: 10 };
+    // Only BB is stored; SB = floor(BB/2)
+    this.settings = { bb: 2, minBuyin: 100, ante: 0, timer: 30, maxSeats: 10 };
     this.paused = false;
     this.phase = 'waiting';
     this.handNumber = 0;
@@ -113,16 +109,20 @@ class Room {
     this.bombNext = false;
     this.log = [];
     this.turnTimer = null;
+    this.turnTimerStartedAt = 0;
+    this.turnTimerDuration = 0;
+    this.autoDealTimer = null;
+    this.endingAfterHand = false;
     this.wentToShowdown = false;
   }
+  get sb() { return Math.floor(this.settings.bb / 2); }
+  get bb() { return this.settings.bb; }
   addLog(text) {
     const t = new Date().toLocaleTimeString();
     this.log.unshift(`[${t}] ${text}`);
     if (this.log.length > 200) this.log.pop();
   }
-  activePlayers() {
-    return [...this.players.values()].filter(p => p.seated && !p.away && !p.out);
-  }
+  activePlayers() { return [...this.players.values()].filter(p => p.seated && !p.away && !p.out); }
   inHandPlayers() { return [...this.players.values()].filter(p => p.inHand); }
   notFolded() { return this.inHandPlayers().filter(p => !p.folded); }
   canAct() { return this.notFolded().filter(p => !p.allIn); }
@@ -143,7 +143,7 @@ class Room {
   }
 }
 
-/* ─────────────── SOCKET HANDLERS ─────────────── */
+/* ─────────────── SNAPSHOT ─────────────── */
 function roomSnapshot(room, viewerId) {
   const players = [...room.players.values()].map(p => ({
     id: p.id,
@@ -168,7 +168,14 @@ function roomSnapshot(room, viewerId) {
   return {
     code: room.code,
     adminId: room.adminId,
-    settings: room.settings,
+    settings: {
+      bb: room.settings.bb,
+      sb: room.sb,
+      minBuyin: room.settings.minBuyin,
+      ante: room.settings.ante,
+      timer: room.settings.timer,
+      maxSeats: room.settings.maxSeats
+    },
     phase: room.phase,
     handNumber: room.handNumber,
     board: room.board,
@@ -182,6 +189,7 @@ function roomSnapshot(room, viewerId) {
     paused: room.paused,
     runItTwiceArmed: room.runItTwiceFlag,
     bombNext: room.bombNext,
+    endingAfterHand: room.endingAfterHand,
     players,
     log: room.log,
     deckHash: room.deckHash,
@@ -201,8 +209,69 @@ function systemMsg(room, text) {
   }
 }
 
-/* ─────────────── CORE POKER FLOW ─────────────── */
+/* ─────────────── TURN TIMER (pause-aware) ─────────────── */
+function startTurnTimer(room) {
+  clearTimeout(room.turnTimer);
+  room.turnTimer = null;
+  if (!room.settings.timer || !room.turnId || room.paused) return;
+  const ms = room.settings.timer * 1000;
+  room.turnTimerStartedAt = Date.now();
+  room.turnTimerDuration = ms;
+  room.turnTimer = setTimeout(() => {
+    const p = room.players.get(room.turnId);
+    if (!p) return;
+    // Auto-fold on timeout
+    handleAction(room, p.id, { type: 'fold' });
+  }, ms);
+}
+function pauseTurnTimer(room) {
+  if (!room.turnTimer) return;
+  clearTimeout(room.turnTimer);
+  const elapsed = Date.now() - room.turnTimerStartedAt;
+  room.turnTimerDuration = Math.max(0, room.turnTimerDuration - elapsed);
+  room.turnTimer = null;
+}
+function resumeTurnTimer(room) {
+  if (!room.turnId || room.turnTimerDuration <= 0) return;
+  room.turnTimerStartedAt = Date.now();
+  room.turnTimer = setTimeout(() => {
+    const p = room.players.get(room.turnId);
+    if (!p) return;
+    handleAction(room, p.id, { type: 'fold' });
+  }, room.turnTimerDuration);
+}
+
+/* ─────────────── AUTO-DEAL NEXT HAND ─────────────── */
+function scheduleAutoDeal(room) {
+  clearTimeout(room.autoDealTimer);
+  room.autoDealTimer = null;
+  if (room.endingAfterHand) return;
+  if (room.paused) return;
+  const eligible = room.activePlayers().filter(p => p.chips > 0);
+  if (eligible.length < 2) return;
+  room.autoDealTimer = setTimeout(() => {
+    if (room.endingAfterHand || room.paused) return;
+    if (room.phase !== 'waiting') return;
+    const el = room.activePlayers().filter(p => p.chips > 0);
+    if (el.length < 2) return;
+    startNewHand(room);
+  }, 3000);
+}
+
+function emitGameEnded(room) {
+  room.endingAfterHand = true;
+  room.phase = 'ended';
+  clearTimeout(room.turnTimer);
+  clearTimeout(room.autoDealTimer);
+  room.addLog('■ Game ended.');
+  for (const p of room.players.values()) {
+    if (p.socketId) io.to(p.socketId).emit('game_ended', roomSnapshot(room, p.id));
+  }
+}
+
+/* ─────────────── POKER FLOW ─────────────── */
 function startNewHand(room) {
+  clearTimeout(room.autoDealTimer);
   const seated = room.activePlayers();
   if (seated.length < 2) { systemMsg(room, 'Need at least 2 seated players.'); room.phase = 'waiting'; return; }
 
@@ -214,7 +283,7 @@ function startNewHand(room) {
   room.pots = [];
   room.acted = new Set();
   room.currentBet = 0;
-  room.minRaise = room.settings.bb;
+  room.minRaise = room.bb;
   room.wentToShowdown = false;
   room.phase = 'preflop';
   room.runItTwiceFlag = false;
@@ -238,10 +307,10 @@ function startNewHand(room) {
   const sbId = hud ? inHand[dIdx].id : inHand[(dIdx + 1) % inHand.length].id;
   const bbId = hud ? inHand[(dIdx + 1) % inHand.length].id : inHand[(dIdx + 2) % inHand.length].id;
 
-  postBet(room, room.players.get(sbId), room.settings.sb, 'SB');
-  postBet(room, room.players.get(bbId), room.settings.bb, 'BB');
-  room.currentBet = room.settings.bb;
-  room.minRaise = room.settings.bb;
+  postBet(room, room.players.get(sbId), room.sb, 'SB');
+  postBet(room, room.players.get(bbId), room.bb, 'BB');
+  room.currentBet = room.bb;
+  room.minRaise = room.bb;
 
   if (room.bombNext) {
     for (const p of inHand) {
@@ -252,7 +321,7 @@ function startNewHand(room) {
     room.addLog(`💣 BOMB POT — everyone ante ${room.settings.ante}`);
     for (let i = 0; i < 3; i++) room.board.push(room.deck.pop());
     room.phase = 'flop';
-    room.currentBet = 0; room.minRaise = room.settings.bb;
+    room.currentBet = 0; room.minRaise = room.bb;
     for (const p of inHand) p.bet = 0;
     room.turnId = inHand[(inHand.findIndex(p=>p.id===room.dealerId) + 1) % inHand.length].id;
   } else {
@@ -261,7 +330,7 @@ function startNewHand(room) {
 
   advanceTurnIfNeeded(room, true);
 
-  room.addLog(`▶ Hand #${room.handNumber} — dealer: ${room.players.get(room.dealerId).name} — blinds ${room.settings.sb}/${room.settings.bb}`);
+  room.addLog(`▶ Hand #${room.handNumber} — dealer: ${room.players.get(room.dealerId).name} — blinds ${room.sb}/${room.bb}`);
   startTurnTimer(room);
   broadcast(room);
 }
@@ -273,18 +342,6 @@ function postBet(room, player, amount, label) {
   player.handContrib += amt;
   if (player.chips === 0) player.allIn = true;
   if (label) player.lastAction = label;
-}
-
-function startTurnTimer(room) {
-  clearTimeout(room.turnTimer);
-  if (!room.settings.timer || !room.turnId) return;
-  room.turnTimer = setTimeout(() => {
-    const p = room.players.get(room.turnId);
-    if (!p) return;
-    const toCall = room.currentBet - p.bet;
-    if (toCall <= 0) handleAction(room, p.id, { type: 'check' });
-    else handleAction(room, p.id, { type: 'fold' });
-  }, room.settings.timer * 1000);
 }
 
 function advanceTurnIfNeeded(room, fresh = false) {
@@ -326,7 +383,8 @@ function handleAction(room, playerId, action) {
     if (p.chips === 0) p.allIn = true;
     p.lastAction = amt < toCall ? `All-in ${amt}` : `Call ${amt}`;
   } else if (action.type === 'raise') {
-    const target = Math.max(room.currentBet + room.minRaise, Math.floor(action.amount));
+    const intAmount = Math.floor(action.amount); // integers only
+    const target = Math.max(room.currentBet + room.minRaise, intAmount);
     const needed = target - p.bet;
     const amt = Math.min(needed, p.chips);
     p.chips -= amt; p.bet += amt; p.handContrib += amt;
@@ -357,7 +415,7 @@ function endBettingRound(room) {
   room.buildPots();
   for (const p of room.inHandPlayers()) p.bet = 0;
   room.currentBet = 0;
-  room.minRaise = room.settings.bb;
+  room.minRaise = room.bb;
   room.acted.clear();
 
   if (room.phase === 'preflop') {
@@ -390,7 +448,6 @@ function endBettingRound(room) {
 
 function runOutBoard(room) {
   while (room.board.length < 5) room.board.push(room.deck.pop());
-
   if (room.runItTwiceFlag && room.notFolded().length >= 2) {
     room.board2 = [];
     while (room.board2.length < 5) room.board2.push(room.deck.pop());
@@ -465,6 +522,8 @@ function showdown(room) {
   for (const p of room.inHandPlayers()) { p.inHand = false; p.bet = 0; }
   room.pots = [];
   room.turnId = null;
+  room.phase = 'waiting';
+  clearTimeout(room.turnTimer);
 
   for (const p of [...room.players.values()]) {
     if (p.leaveAfterHand) {
@@ -473,13 +532,13 @@ function showdown(room) {
       systemMsg(room, `${p.name} left the table with ${p.chips} chips.`);
     }
   }
-
   for (const p of room.players.values()) {
     if (p.seated && p.chips === 0) systemMsg(room, `${p.name} is out of chips — rebuy to continue.`);
   }
 
-  room.phase = 'waiting';
+  if (room.endingAfterHand) { emitGameEnded(room); return; }
   broadcast(room);
+  scheduleAutoDeal(room);
 }
 
 function awardPotTo(room, winner, reason) {
@@ -491,6 +550,7 @@ function awardPotTo(room, winner, reason) {
   room.pots = [];
   room.turnId = null;
   room.phase = 'waiting';
+  clearTimeout(room.turnTimer);
 
   for (const p of [...room.players.values()]) {
     if (p.leaveAfterHand) {
@@ -498,7 +558,10 @@ function awardPotTo(room, winner, reason) {
       systemMsg(room, `${p.name} left the table with ${p.chips} chips.`);
     }
   }
+
+  if (room.endingAfterHand) { emitGameEnded(room); return; }
   broadcast(room);
+  scheduleAutoDeal(room);
 }
 
 /* ─────────────── SOCKET.IO ─────────────── */
@@ -591,15 +654,10 @@ io.on('connection', socket => {
     } else {
       myRoom.addLog(`${p.name} requested buy-in of ${amount}.`);
       systemMsg(myRoom, `${p.name} requested buy-in of ${amount}.`);
-
-      // Push a targeted popup to the admin
       const admin = myRoom.players.get(myRoom.adminId);
       if (admin && admin.socketId) {
         io.to(admin.socketId).emit('buyin_request_popup', {
-          playerId: p.id,
-          playerName: p.name,
-          amount,
-          isFirst
+          playerId: p.id, playerName: p.name, amount, isFirst
         });
       }
     }
@@ -624,19 +682,20 @@ io.on('connection', socket => {
   socket.on('admin_settings', (patch) => {
     if (!myRoom || myId !== myRoom.adminId) return;
     const s = myRoom.settings;
-    if (patch.sb > 0) s.sb = Math.floor(patch.sb);
-    if (patch.bb >= s.sb) s.bb = Math.floor(patch.bb);
+    if (patch.bb >= 2) s.bb = Math.floor(patch.bb);
     if (patch.minBuyin > 0) s.minBuyin = Math.floor(patch.minBuyin);
     if (patch.ante >= 0) s.ante = Math.floor(patch.ante);
     if (patch.timer >= 0) s.timer = Math.floor(patch.timer);
     if (patch.maxSeats >= 2 && patch.maxSeats <= 10) s.maxSeats = Math.floor(patch.maxSeats);
-    myRoom.addLog(`⚙ Settings: blinds ${s.sb}/${s.bb}, min buy-in ${s.minBuyin}, ante ${s.ante}, timer ${s.timer}s.`);
+    myRoom.addLog(`⚙ Settings: blinds ${myRoom.sb}/${myRoom.bb}, min buy-in ${s.minBuyin}, ante ${s.ante}, timer ${s.timer}s.`);
     broadcast(myRoom);
   });
 
-  socket.on('admin_next_hand', () => {
+  // Only allowed to trigger the FIRST hand. After that, hands auto-deal.
+  socket.on('admin_start_game', () => {
     if (!myRoom || myId !== myRoom.adminId) return;
-    if (myRoom.phase !== 'waiting') return socket.emit('toast', 'Hand in progress.');
+    if (myRoom.handNumber > 0) return;
+    if (myRoom.phase !== 'waiting') return;
     if (myRoom.paused) return socket.emit('toast', 'Table is paused.');
     startNewHand(myRoom);
   });
@@ -659,15 +718,29 @@ io.on('connection', socket => {
   socket.on('admin_pause', () => {
     if (!myRoom || myId !== myRoom.adminId) return;
     myRoom.paused = !myRoom.paused;
-    systemMsg(myRoom, myRoom.paused ? '⏸ Game paused.' : '▶ Game resumed.');
+    if (myRoom.paused) {
+      pauseTurnTimer(myRoom);
+      clearTimeout(myRoom.autoDealTimer);
+      myRoom.autoDealTimer = null;
+      systemMsg(myRoom, '⏸ Game paused.');
+    } else {
+      resumeTurnTimer(myRoom);
+      systemMsg(myRoom, '▶ Game resumed.');
+      if (myRoom.phase === 'waiting' && !myRoom.endingAfterHand) scheduleAutoDeal(myRoom);
+    }
     broadcast(myRoom);
   });
 
+  // End: wait for the current hand to finish, then stop.
   socket.on('admin_end', () => {
     if (!myRoom || myId !== myRoom.adminId) return;
-    myRoom.addLog('■ Game ended by admin.');
-    for (const p of myRoom.players.values()) {
-      if (p.socketId) io.to(p.socketId).emit('game_ended', roomSnapshot(myRoom, p.id));
+    if (myRoom.phase === 'waiting' || myRoom.phase === 'ended' || myRoom.handNumber === 0) {
+      emitGameEnded(myRoom);
+    } else {
+      myRoom.endingAfterHand = true;
+      myRoom.addLog('■ Game will end after this hand.');
+      systemMsg(myRoom, '■ Last hand — game will end after this hand.');
+      broadcast(myRoom);
     }
   });
 
