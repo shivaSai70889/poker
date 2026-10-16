@@ -7,7 +7,6 @@ let S = null;
 let myName = '';
 let lastTurnId = null;
 
-/* Persistent client id */
 function getClientId() {
   let id = localStorage.getItem('poker_client_id');
   if (!id) {
@@ -87,9 +86,7 @@ window.addEventListener('load', () => {
 
     if (saved) {
       socket.emit('join_room', { code, name: saved, clientId: CLIENT_ID }, (res) => {
-        if (res.ok && res.resumed) {
-          enterGame(res.code, res.id);
-        }
+        if (res.ok && res.resumed) enterGame(res.code, res.id);
       });
     }
   }
@@ -193,7 +190,6 @@ $('btn-share').onclick = async () => {
 
 /* ══════════ ADMIN BUY-IN POPUP QUEUE ══════════ */
 let approveQueue = [];
-
 socket.on('buyin_request_popup', (data) => {
   approveQueue.push(data);
   maybeShowApprove();
@@ -249,9 +245,7 @@ function render() {
 
   if (S.turnId !== lastTurnId) {
     lastTurnId = S.turnId;
-    if (S.turnId === ME && window.matchMedia('(max-width: 880px)').matches) {
-      closeDrawer();
-    }
+    if (S.turnId === ME && window.matchMedia('(max-width: 880px)').matches) closeDrawer();
   }
 
   renderPlayerList();
@@ -281,34 +275,40 @@ function renderBoard() {
   } else {
     $('pot-display').classList.add('hidden');
   }
-
-  // Hand strength for me
-  const me = S.players.find(p => p.id === ME);
-  const hs = $('hand-strength');
-  if (me && me.handRank) {
-    hs.textContent = me.handRank;
-    hs.classList.remove('hidden');
-  } else if (me && me.preflop) {
-    hs.textContent = me.preflop;
-    hs.classList.remove('hidden');
-  } else {
-    hs.classList.add('hidden');
-  }
 }
 
+/* ── Seat positions with HERO ROTATION ──
+   Index 0 is always the viewer (bottom center).
+   Others proceed clockwise: left → top → right → back to me.       */
 function seatPos(i, n) {
-  const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+  // Screen coordinates: 0°=right, 90°=bottom, 180°=left, 270°=top
+  const angleDeg = 90 + (360 / n) * i;
+  const angle = (angleDeg * Math.PI) / 180;
+
   const isMobile = window.matchMedia('(max-width: 880px)').matches;
   const rx = isMobile ? 40 : 42;
-  const ry = isMobile ? 34 : 38;
-  return { x: 50 + rx * Math.cos(angle), y: 50 + ry * Math.sin(angle) };
+
+  // Hero (i=0) sits further inward so their cards are visible above the action bar
+  const ryBase = isMobile ? 30 : 38;
+  const ry = i === 0 ? ryBase * 0.80 : ryBase;
+
+  return {
+    x: 50 + rx * Math.cos(angle),
+    y: 50 + ry * Math.sin(angle)
+  };
 }
 
 function renderSeats() {
   const seats = $('seats');
   seats.classList.toggle('paused', S.paused);
   seats.innerHTML = '';
-  const players = S.players.filter(p => p.seated);
+
+  // ── Rotate list so ME is first ──
+  let players = S.players.filter(p => p.seated);
+  if (ME) {
+    const idx = players.findIndex(p => p.id === ME);
+    if (idx > 0) players = [...players.slice(idx), ...players.slice(0, idx)];
+  }
   const n = players.length;
   const timerSecs = S.settings.timer;
   const inHandPhase = ['preflop','flop','turn','river'].includes(S.phase);
@@ -317,12 +317,14 @@ function renderSeats() {
     const pos = seatPos(i, n);
     const d = document.createElement('div');
     d.className = 'seat';
+    if (p.id === ME) d.classList.add('hero');
     if (p.isTurn) d.classList.add('turn');
     if (p.folded) d.classList.add('folded');
     if (p.isAdmin) d.classList.add('admin');
     if (p.isWinner && (S.phase === 'showdown' || S.phase === 'ended')) d.classList.add('winner');
     d.style.left = pos.x + '%';
     d.style.top = pos.y + '%';
+
     const badges = [];
     if (p.id === ME) badges.push('YOU');
     if (p.away) badges.push('AWAY');
@@ -330,20 +332,23 @@ function renderSeats() {
 
     const showTimer = p.isTurn && inHandPhase && timerSecs > 0 && !S.paused;
 
-    // Small rank label (only shown for the viewer, or everyone after showdown)
+    // Hand-strength label — always for me, and for revealed opponents at showdown
     let rankLabel = '';
-    if (p.id === ME && p.handRank && !p.folded) rankLabel = p.handRank;
-    else if (p.id === ME && p.preflop && !p.folded && S.phase === 'preflop') rankLabel = p.preflop;
-    else if (p.revealed && p.handRank) rankLabel = p.handRank;
+    if (p.id === ME && !p.folded) {
+      if (p.handRank) rankLabel = p.handRank;
+      else if (p.preflop && S.phase === 'preflop') rankLabel = p.preflop;
+    } else if (p.revealed && p.handRank) {
+      rankLabel = p.handRank;
+    }
 
     d.innerHTML = `
       <div class="badge">${badges.join(' · ')}</div>
       <div class="name">${escapeHTML(p.name)}</div>
       <div class="chips">${p.chips}</div>
       <div class="hole">${p.hole.map(cardHTML).join('')}</div>
+      ${rankLabel ? `<div class="seat-rank">${escapeHTML(rankLabel)}</div>` : ''}
       ${p.bet > 0 ? `<div class="bet">${p.bet}</div>` : ''}
       <div class="last">${p.lastAction || ''}</div>
-      ${rankLabel ? `<div class="seat-rank">${escapeHTML(rankLabel)}</div>` : ''}
       ${!p.connected ? '<div class="offline">offline</div>' : ''}
       ${showTimer ? `<div class="timer-bar" style="animation-duration:${timerSecs}s"></div>` : ''}
     `;
@@ -456,27 +461,16 @@ function renderActionBar() {
     return;
   }
 
-  // ── Showdown window ──
+  // Showdown window
   if (S.phase === 'showdown') {
-    // Winner info
     const winners = S.players.filter(p => p.isWinner);
-    let info = '';
-    if (winners.length) {
-      info = `<span class="act-info">🏆 <b>${winners.map(w => escapeHTML(w.name)).join(', ')}</b> win</span>`;
-    } else {
-      info = '<span class="act-info">Hand complete</span>';
-    }
-
-    // Reveal button if I was in the hand and haven't revealed
-    const meWon = me && me.isWinner;
-    const canReveal = me && me.inHand === false && !me.revealed && me.hole && me.hole.length === 2 && me.hole[0] !== '??';
-    // Actually "inHand" is now false; use a different check — was I dealt in this hand?
-    // Simplest: if I have 2 hole cards and I'm not a winner and not revealed
-    const iWasDealt = me && me.hole && me.hole.length === 2;
-    const showRevealBtn = iWasDealt && !me.revealed && !meWon;
-
+    const info = winners.length
+      ? `<span class="act-info">🏆 <b>${winners.map(w => escapeHTML(w.name)).join(', ')}</b> win</span>`
+      : '<span class="act-info">Hand complete</span>';
     bar.appendChild(el('span', info));
-    if (showRevealBtn) {
+
+    // Reveal button: only for players who were in the hand at showdown
+    if (me && me.atShowdown && !me.revealed) {
       const b = document.createElement('button');
       b.className = 'btn reveal-btn';
       b.textContent = '👁 Show my hand';
@@ -509,12 +503,11 @@ function renderActionBar() {
     return;
   }
 
-  // ── Our turn ──
+  // Our turn
   const toCall = S.currentBet - me.bet;
   const minRaiseTo = S.currentBet + S.minRaise;
   const maxRaiseTo = me.chips + me.bet;
 
-  // Hand strength hint
   if (me.handRank || me.preflop) {
     bar.appendChild(el('span', `<span class="act-info">You have <b>${escapeHTML(me.handRank || me.preflop)}</b></span>`));
   }
@@ -552,7 +545,6 @@ function renderActionBar() {
     v = Math.max(minRaiseTo, Math.min(maxRaiseTo, v));
     socket.emit('player_action', { type: 'raise', amount: v });
   };
-
   rg.appendChild(input);
   rg.appendChild(raiseBtn);
   bar.appendChild(rg);
@@ -560,11 +552,7 @@ function renderActionBar() {
   bar.appendChild(btn('All-in', () => socket.emit('player_action', { type: 'raise', amount: maxRaiseTo }), 'primary'));
 }
 
-function el(tag, html) {
-  const e = document.createElement(tag);
-  e.innerHTML = html;
-  return e;
-}
+function el(tag, html) { const e = document.createElement(tag); e.innerHTML = html; return e; }
 function btn(label, cb, variant) {
   const b = document.createElement('button');
   b.className = 'btn' + (variant ? ' ' + variant : '');
