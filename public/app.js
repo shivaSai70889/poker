@@ -1,9 +1,9 @@
 const $ = (id) => document.getElementById(id);
 const socket = io();
 
-let ME = null;        // my player id
-let CODE = null;      // room code
-let S = null;         // latest game state
+let ME = null;
+let CODE = null;
+let S = null;
 let myName = '';
 
 const RANK_SYM = { s:'♠', h:'♥', d:'♦', c:'♣' };
@@ -15,7 +15,9 @@ const cardHTML = (c) => {
   return `<div class="card ${red}"><span class="r">${r}</span><span class="s">${RANK_SYM[s]}</span></div>`;
 };
 
-/* ── Lobby ── */
+/* ══════════ LOBBY ══════════ */
+function msg(t) { $('lobby-msg').textContent = t; }
+
 $('btn-create').onclick = () => {
   myName = $('in-name').value.trim();
   if (!myName) return msg('Please enter your name.');
@@ -35,7 +37,8 @@ $('btn-join').onclick = () => {
   });
 };
 $('in-code').addEventListener('input', e => e.target.value = e.target.value.toUpperCase());
-function msg(t) { $('lobby-msg').textContent = t; }
+$('in-code').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-join').click(); });
+$('in-name').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-create').click(); });
 
 function enterGame(code, id) {
   CODE = code; ME = id;
@@ -44,11 +47,15 @@ function enterGame(code, id) {
   history.replaceState(null, '', '?room=' + code);
 }
 
-/* Auto-join via URL */
 const urlRoom = new URLSearchParams(location.search).get('room');
 if (urlRoom) $('in-code').value = urlRoom.toUpperCase();
+window.addEventListener('load', () => {
+  const saved = localStorage.getItem('poker_name');
+  if (saved && !$('in-name').value) $('in-name').value = saved;
+});
+$('in-name').addEventListener('change', e => localStorage.setItem('poker_name', e.target.value));
 
-/* ── State updates ── */
+/* ══════════ STATE ══════════ */
 socket.on('state', (state) => {
   S = state;
   if (!ME && myName) {
@@ -57,33 +64,31 @@ socket.on('state', (state) => {
   }
   render();
 });
+
 socket.on('toast', (t) => toast(t));
+
 socket.on('game_ended', (state) => {
   S = state;
+  closeDrawer();
   showFinalLedger();
 });
 
-function toast(t) {
-  const d = document.createElement('div');
-  d.className = 'toast';
-  d.textContent = t;
-  $('toasts').appendChild(d);
-  setTimeout(() => d.remove(), 4000);
+/* ══════════ DRAWER (mobile menu) ══════════ */
+const panel = $('panel');
+const overlay = $('panel-overlay');
+
+function openDrawer() {
+  panel.classList.add('open');
+  overlay.classList.add('open');
 }
+function closeDrawer() {
+  panel.classList.remove('open');
+  overlay.classList.remove('open');
+}
+$('btn-menu').onclick = openDrawer;
+$('btn-drawer-close').onclick = closeDrawer;
+overlay.onclick = closeDrawer;
 
-/* ── Share link ── */
-$('btn-share').onclick = async () => {
-  const url = location.origin + '/?room=' + CODE;
-  try {
-    if (navigator.share) await navigator.share({ title: 'Join my poker table', url });
-    else { await navigator.clipboard.writeText(url); toast('Invite link copied!'); }
-  } catch {
-    await navigator.clipboard.writeText(url);
-    toast('Invite link copied!');
-  }
-};
-
-/* ── Tabs ── */
 document.querySelectorAll('.tab').forEach(t => {
   t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
@@ -94,14 +99,79 @@ document.querySelectorAll('.tab').forEach(t => {
   };
 });
 
-/* ── Render ── */
+/* ══════════ TOASTS ══════════ */
+function toast(t) {
+  const d = document.createElement('div');
+  d.className = 'toast';
+  d.textContent = t;
+  $('toasts').appendChild(d);
+  setTimeout(() => d.remove(), 4000);
+}
+
+/* ══════════ SHARE LINK ══════════ */
+$('btn-share').onclick = async () => {
+  const url = location.origin + '/?room=' + CODE;
+  try {
+    if (navigator.share) await navigator.share({ title: 'Join my poker table', url });
+    else { await navigator.clipboard.writeText(url); toast('Invite link copied!'); }
+  } catch {
+    try { await navigator.clipboard.writeText(url); toast('Invite link copied!'); } catch {}
+  }
+};
+
+/* ══════════ ADMIN BUY-IN POPUP QUEUE ══════════ */
+let approveQueue = [];
+
+socket.on('buyin_request_popup', (data) => {
+  approveQueue.push(data);
+  maybeShowApprove();
+});
+
+function maybeShowApprove() {
+  if (!$('modal-approve').classList.contains('hidden')) return;
+  if (approveQueue.length === 0) return;
+  const next = approveQueue[0];
+  $('approve-name').textContent = next.playerName;
+  $('approve-amount').textContent = next.amount;
+  $('approve-sub').textContent = next.isFirst
+    ? 'First buy-in for this player.'
+    : 'Rebuy — no minimum applies.';
+  $('modal-approve').dataset.playerId = next.playerId;
+  $('modal-approve').classList.remove('hidden');
+}
+
+function closeApproveModal() {
+  $('modal-approve').classList.add('hidden');
+  setTimeout(maybeShowApprove, 120);
+}
+
+$('approve-accept').onclick = () => {
+  const id = $('modal-approve').dataset.playerId;
+  socket.emit('admin_resolve_buyin', { playerId: id, approve: true });
+  approveQueue.shift();
+  closeApproveModal();
+};
+$('approve-reject').onclick = () => {
+  const id = $('modal-approve').dataset.playerId;
+  socket.emit('admin_resolve_buyin', { playerId: id, approve: false });
+  approveQueue.shift();
+  closeApproveModal();
+};
+$('approve-later').onclick = () => {
+  const first = approveQueue.shift();
+  approveQueue.push(first);
+  closeApproveModal();
+};
+
+/* ══════════ RENDER ══════════ */
 function render() {
   if (!S) return;
   const me = S.players.find(p => p.id === ME);
+
   $('tb-code').textContent = S.code;
-  $('tb-blinds').textContent = `Blinds ${S.settings.sb}/${S.settings.bb}`;
-  $('tb-hand').textContent = `Hand #${S.handNumber} · ${S.phase}`;
-  $('tb-you').textContent = me ? `${me.name} · ${me.chips}` : '';
+  $('tb-blinds').textContent = `${S.settings.sb}/${S.settings.bb}`;
+  $('tb-hand').textContent = `#${S.handNumber} · ${S.phase}`;
+  $('tb-you').textContent = me ? `${me.name} · ${me.chips}` : '–';
   $('tb-paused').classList.toggle('hidden', !S.paused);
   $('btn-pause').textContent = S.paused ? '▶ Resume' : '⏸ Pause';
 
@@ -113,6 +183,11 @@ function render() {
   renderLog();
   renderActionBar();
   if ($('pane-ledger').classList.contains('active')) renderLedger();
+
+  const pending = me && me.pendingBuyin != null;
+  $('btn-rebuy').textContent = pending ? `Awaiting admin…` : 'Buy-in';
+  $('btn-rebuy').disabled = !!pending;
+  $('btn-rebuy-top').title = pending ? 'Awaiting approval' : 'Buy-in';
 }
 
 function renderBoard() {
@@ -123,18 +198,15 @@ function renderBoard() {
   } else {
     $('board2-wrap').classList.add('hidden');
   }
-  $('pot-display').textContent = S.pot > 0 ? `Pot: ${S.pot}` : '';
+  $('pot-display').textContent = S.pot > 0 ? `Pot ${S.pot}` : '';
 }
 
 function seatPos(i, n) {
   const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
-  // Use ellipse with different rx / ry to fit felt
-  const rx = 42, ry = 38;
-  const cx = 50, cy = 50;
-  return {
-    x: cx + rx * Math.cos(angle),
-    y: cy + ry * Math.sin(angle)
-  };
+  const isMobile = window.matchMedia('(max-width: 880px)').matches;
+  const rx = isMobile ? 40 : 42;
+  const ry = isMobile ? 34 : 38;
+  return { x: 50 + rx * Math.cos(angle), y: 50 + ry * Math.sin(angle) };
 }
 
 function renderSeats() {
@@ -151,12 +223,16 @@ function renderSeats() {
     if (p.isAdmin) d.classList.add('admin');
     d.style.left = pos.x + '%';
     d.style.top = pos.y + '%';
+    const badges = [];
+    if (p.id === ME) badges.push('YOU');
+    if (p.away) badges.push('AWAY');
+    if (p.allIn) badges.push('ALL-IN');
     d.innerHTML = `
-      <div class="badge">${p.id === ME ? 'YOU' : ''}${p.away ? ' · AWAY' : ''}${p.allIn ? ' · ALL-IN' : ''}</div>
+      <div class="badge">${badges.join(' · ')}</div>
       <div class="name">${escapeHTML(p.name)}</div>
       <div class="chips">${p.chips}</div>
       <div class="hole">${p.hole.map(cardHTML).join('')}</div>
-      ${p.bet > 0 ? `<div class="bet">Bet ${p.bet}</div>` : ''}
+      ${p.bet > 0 ? `<div class="bet">${p.bet}</div>` : ''}
       <div class="last">${p.lastAction || ''}</div>
       ${!p.connected ? '<div class="offline">offline</div>' : ''}
     `;
@@ -172,15 +248,15 @@ function renderPlayerList() {
     const row = document.createElement('div');
     row.className = 'prow' + (p.id === ME ? ' you' : '');
     let status = '';
-    if (p.away) status = '<span class="tag away">away</span>';
+    if (!p.seated) status = '<span class="tag">left</span>';
+    else if (p.away) status = '<span class="tag away">away</span>';
     else if (p.folded) status = '<span class="tag fold">folded</span>';
-    else if (!p.seated) status = '<span class="tag">left</span>';
     else if (p.allIn) status = '<span class="tag">all-in</span>';
     else if (p.inHand) status = '<span class="tag">in hand</span>';
     row.innerHTML = `
       <div class="pname">${escapeHTML(p.name)} ${p.isAdmin ? '👑' : ''}${status}</div>
       <div class="pchips">${p.chips}</div>
-      <div class="pstatus">${p.leaveAfterHand ? 'leaving…' : ''}</div>
+      <div class="pstatus">${p.leaveAfterHand ? 'leaving after hand…' : p.pendingBuyin != null ? `requested buy-in ${p.pendingBuyin}` : ''}</div>
     `;
     list.appendChild(row);
   }
@@ -197,7 +273,9 @@ function renderPending() {
     for (const p of pending) {
       const d = document.createElement('div');
       d.className = 'pend-item';
-      d.innerHTML = `<div>${escapeHTML(p.name)}</div><div class="amt">${p.pendingBuyin}</div>
+      d.innerHTML = `
+        <div>${escapeHTML(p.name)}</div>
+        <div class="amt">${p.pendingBuyin}</div>
         <div><button class="ok">✓</button><button class="no">✕</button></div>`;
       d.querySelector('.ok').onclick = () => socket.emit('admin_resolve_buyin', { playerId: p.id, approve: true });
       d.querySelector('.no').onclick = () => socket.emit('admin_resolve_buyin', { playerId: p.id, approve: false });
@@ -234,12 +312,15 @@ $('btn-save-settings').onclick = () => {
   });
   toast('Settings saved');
 };
-$('btn-next').onclick = () => socket.emit('admin_next_hand');
+$('btn-next').onclick = () => { socket.emit('admin_next_hand'); closeDrawer(); };
 $('btn-bomb').onclick = () => socket.emit('admin_bomb');
 $('btn-rit').onclick = () => socket.emit('admin_rit');
 $('btn-pause').onclick = () => socket.emit('admin_pause');
 $('btn-end').onclick = () => {
-  if (confirm('End the game for everyone? The final ledger will be shown.')) socket.emit('admin_end');
+  if (confirm('End the game for everyone? The final ledger will be shown.')) {
+    socket.emit('admin_end');
+    closeDrawer();
+  }
 };
 
 function renderLog() {
@@ -252,7 +333,10 @@ function renderActionBar() {
   const me = S.players.find(p => p.id === ME);
   const myTurn = S.turnId === ME && !S.paused;
 
-  if (S.paused) { bar.innerHTML = '<span class="hint">⏸ Table paused by admin.</span>'; return; }
+  if (S.paused) {
+    bar.innerHTML = '<span class="hint">⏸ Table paused by admin.</span>';
+    return;
+  }
   if (S.phase === 'waiting' || S.phase === 'showdown') {
     if (S.adminId === ME) {
       const btn = document.createElement('button');
@@ -269,14 +353,15 @@ function renderActionBar() {
     bar.innerHTML = '<span class="hint">Waiting…</span>';
     return;
   }
-  if (!myTurn) { bar.innerHTML = '<span class="hint">Waiting for your turn…</span>'; return; }
+  if (!myTurn) {
+    bar.innerHTML = '<span class="hint">Waiting for your turn…</span>';
+    return;
+  }
 
   const toCall = S.currentBet - me.bet;
   const minRaiseTo = S.currentBet + S.minRaise;
 
-  const fold = btn('Fold', () => socket.emit('player_action', { type: 'fold' }));
-  fold.classList.add('danger');
-  bar.appendChild(fold);
+  bar.appendChild(btn('Fold', () => socket.emit('player_action', { type: 'fold' }), 'danger'));
 
   if (toCall <= 0) {
     bar.appendChild(btn('Check', () => socket.emit('player_action', { type: 'check' })));
@@ -288,6 +373,7 @@ function renderActionBar() {
   rg.className = 'raise-group';
   const input = document.createElement('input');
   input.type = 'number';
+  input.inputMode = 'numeric';
   input.min = minRaiseTo;
   input.max = me.chips + me.bet;
   input.value = Math.min(minRaiseTo, me.chips + me.bet);
@@ -299,31 +385,34 @@ function renderActionBar() {
   rg.appendChild(raise);
   bar.appendChild(rg);
 
-  const allIn = document.createElement('button');
-  allIn.className = 'btn primary';
-  allIn.textContent = 'All-in';
-  allIn.onclick = () => socket.emit('player_action', { type: 'raise', amount: me.chips + me.bet });
-  bar.appendChild(allIn);
+  bar.appendChild(btn('All-in', () => socket.emit('player_action', { type: 'raise', amount: me.chips + me.bet }), 'primary'));
 }
 
-function btn(label, cb) {
+function btn(label, cb, variant) {
   const b = document.createElement('button');
-  b.className = 'btn';
+  b.className = 'btn' + (variant ? ' ' + variant : '');
   b.textContent = label;
   b.onclick = cb;
   return b;
 }
 
-/* ── Quick actions ── */
+/* ══════════ PLAYER QUICK ACTIONS ══════════ */
 $('btn-away').onclick = () => socket.emit('away_toggle');
 $('btn-leave').onclick = () => {
-  if (confirm('Leave the table after the current hand?')) socket.emit('leave_after_hand');
+  if (confirm('Leave the table after the current hand?')) {
+    socket.emit('leave_after_hand');
+    closeDrawer();
+  }
 };
 
-/* ── Buy-in modal ── */
-$('btn-rebuy').onclick = () => openBuyin();
+/* ══════════ BUY-IN MODAL ══════════ */
+$('btn-rebuy').onclick = () => { openBuyin(); };
+$('btn-rebuy-top').onclick = () => { openBuyin(); };
+
 function openBuyin() {
+  if (!S) return;
   const me = S.players.find(p => p.id === ME);
+  if (me && me.pendingBuyin != null) { toast('Your buy-in is awaiting admin approval.'); return; }
   const isFirst = !me || me.buyIns.length === 0;
   $('buyin-info').textContent = isFirst
     ? `Min initial buy-in: ${S.settings.minBuyin}`
@@ -342,13 +431,14 @@ $('buyin-send').onclick = () => {
   if (!amt || amt <= 0) return toast('Enter an amount');
   socket.emit('request_buyin', { amount: amt });
   $('modal-buyin').classList.add('hidden');
+  toast('Buy-in requested — waiting for admin.');
 };
 
-/* ── Ledger ── */
+/* ══════════ LEDGER ══════════ */
 function renderLedger() {
-  const me = S.players.find(p => p.id === ME);
+  if (!S) return;
   const rows = S.players.map(p => {
-    const buyin = p.buyIns.reduce((a,b)=>a+b, 0);
+    const buyin = p.buyIns.reduce((a, b) => a + b, 0);
     const pl = p.chips - buyin;
     return { name: p.name, buyin, chips: p.chips, pl };
   });
@@ -357,14 +447,14 @@ function renderLedger() {
       <thead><tr><th>Player</th><th>Buy-in</th><th>Chips</th><th>P/L</th></tr></thead>
       <tbody>${rows.map(r => `
         <tr><td>${escapeHTML(r.name)}</td><td>${r.buyin}</td><td>${r.chips}</td>
-        <td class="${r.pl>=0?'pos':'neg'}">${r.pl>=0?'+':''}${r.pl}</td></tr>
+        <td class="${r.pl >= 0 ? 'pos' : 'neg'}">${r.pl >= 0 ? '+' : ''}${r.pl}</td></tr>
       `).join('')}</tbody>
     </table>`;
 }
 
 function showFinalLedger() {
   const rows = S.players.map(p => {
-    const buyin = p.buyIns.reduce((a,b)=>a+b, 0);
+    const buyin = p.buyIns.reduce((a, b) => a + b, 0);
     const pl = p.chips - buyin;
     return { name: p.name, buyin, chips: p.chips, pl };
   });
@@ -373,7 +463,7 @@ function showFinalLedger() {
       <thead><tr><th>Player</th><th>Buy-in</th><th>Final chips</th><th>Profit / Loss</th></tr></thead>
       <tbody>${rows.map(r => `
         <tr><td>${escapeHTML(r.name)}</td><td>${r.buyin}</td><td>${r.chips}</td>
-        <td class="${r.pl>=0?'pos':'neg'}">${r.pl>=0?'+':''}${r.pl}</td></tr>
+        <td class="${r.pl >= 0 ? 'pos' : 'neg'}">${r.pl >= 0 ? '+' : ''}${r.pl}</td></tr>
       `).join('')}</tbody>
     </table>
     <p class="muted" style="margin-top:12px">Hands played: ${S.handNumber}</p>
@@ -383,21 +473,16 @@ function showFinalLedger() {
 $('ledger-close').onclick = () => $('modal-ledger').classList.add('hidden');
 $('ledger-copy').onclick = async () => {
   const txt = S.players.map(p => {
-    const buyin = p.buyIns.reduce((a,b)=>a+b,0);
+    const buyin = p.buyIns.reduce((a, b) => a + b, 0);
     const pl = p.chips - buyin;
-    return `${p.name}: buyin ${buyin}, final ${p.chips}, P/L ${pl>=0?'+':''}${pl}`;
+    return `${p.name}: buyin ${buyin}, final ${p.chips}, P/L ${pl >= 0 ? '+' : ''}${pl}`;
   }).join('\n');
   try { await navigator.clipboard.writeText(txt); toast('Ledger copied'); } catch {}
 };
 
-/* ── Helpers ── */
+/* ══════════ UTILS ══════════ */
 function escapeHTML(s) {
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
-// Auto-fill name from local storage for convenience
-window.addEventListener('load', () => {
-  const saved = localStorage.getItem('poker_name');
-  if (saved && !$('in-name').value) $('in-name').value = saved;
-});
-$('in-name').addEventListener('change', e => localStorage.setItem('poker_name', e.target.value));
+window.addEventListener('resize', () => { if (S) renderSeats(); });
