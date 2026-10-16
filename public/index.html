@@ -11,23 +11,49 @@
 </head>
 <body>
 
+<!-- ══════════ LOBBY ══════════ -->
 <div id="lobby" class="screen">
   <div class="lobby-card">
     <div class="logo">♠ <span>Home Poker</span> ♦</div>
-    <p class="sub">Private table · True-random shuffle · Up to 10 players</p>
 
-    <label class="field">
-      <span>Your name</span>
-      <input id="in-name" type="text" maxlength="14" placeholder="e.g. Arjun" autocomplete="off" />
-    </label>
+    <!-- Full lobby (create or join by code) -->
+    <div id="lobby-full">
+      <p class="sub">Private table · True-random shuffle · Up to 10 players</p>
 
-    <button id="btn-create" class="btn primary big">＋ Create a table</button>
+      <label class="field">
+        <span>Your name</span>
+        <input id="in-name" type="text" maxlength="14" placeholder="e.g. Arjun" autocomplete="off" />
+      </label>
 
-    <div class="or"><span>or join with a code</span></div>
+      <button id="btn-create" class="btn primary big">＋ Create a table</button>
 
-    <div class="join-row">
-      <input id="in-code" type="text" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false" inputmode="text" />
-      <button id="btn-join" class="btn">Join →</button>
+      <div class="or"><span>or join with a code</span></div>
+
+      <div class="join-row">
+        <input id="in-code" type="text" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false" inputmode="text" />
+        <button id="btn-join" class="btn">Join →</button>
+      </div>
+    </div>
+
+    <!-- Quick join via invite link -->
+    <div id="lobby-quick" class="hidden">
+      <p class="sub">You're joining table <b id="quick-code" style="color:var(--gold);letter-spacing:.2em">----</b></p>
+
+      <label class="field">
+        <span>Your name</span>
+        <input id="quick-name" type="text" maxlength="14" placeholder="e.g. Arjun" autocomplete="off" />
+      </label>
+
+      <label class="field">
+        <span>Buy-in amount</span>
+        <input id="quick-buyin" type="number" min="1" step="1" inputmode="numeric" />
+      </label>
+      <p class="hint-inline" id="quick-hint">Min initial buy-in will be checked on entry.</p>
+
+      <button id="btn-quick-join" class="btn primary big">Join & request buy-in</button>
+      <div style="text-align:center;margin-top:12px">
+        <button id="btn-quick-cancel" class="btn ghost small">← Back to lobby</button>
+      </div>
     </div>
 
     <div id="lobby-msg" class="msg"></div>
@@ -38,6 +64,7 @@
   </div>
 </div>
 
+<!-- ══════════ GAME ══════════ -->
 <div id="game" class="screen hidden">
 
   <header id="topbar">
@@ -55,12 +82,14 @@
   <main>
     <section id="table-wrap">
       <div id="felt">
-        <div id="pot-display"></div>
-        <div id="board-area">
-          <div id="board" class="cards"></div>
-          <div id="board2-wrap" class="hidden">
-            <div class="board-label">2nd board</div>
-            <div id="board2" class="cards"></div>
+        <div id="table-center">
+          <div id="pot-display" class="hidden"></div>
+          <div id="board-area">
+            <div id="board" class="cards"></div>
+            <div id="board2-wrap" class="hidden">
+              <div class="board-label">2nd board</div>
+              <div id="board2" class="cards"></div>
+            </div>
           </div>
         </div>
         <div id="seats"></div>
@@ -131,6 +160,26 @@
   </aside>
 </div>
 
+<!-- ══════════ MODALS ══════════ -->
+
+<!-- Share after create -->
+<div id="modal-share" class="modal hidden">
+  <div class="modal-box">
+    <div class="approve-icon">🎉</div>
+    <h3>Table created!</h3>
+    <p class="muted">Share this link with your players:</p>
+    <div class="share-link">
+      <input id="share-url" readonly />
+    </div>
+    <div class="modal-actions">
+      <button id="share-copy" class="btn primary">Copy link</button>
+      <button id="share-native" class="btn">Share…</button>
+      <button id="share-close" class="btn ghost">Later</button>
+    </div>
+  </div>
+</div>
+
+<!-- Buy-in -->
 <div id="modal-buyin" class="modal hidden">
   <div class="modal-box">
     <h3>Buy in</h3>
@@ -146,6 +195,7 @@
   </div>
 </div>
 
+<!-- Admin approve -->
 <div id="modal-approve" class="modal hidden">
   <div class="modal-box">
     <div class="approve-icon">💰</div>
@@ -163,6 +213,7 @@
   </div>
 </div>
 
+<!-- Final ledger -->
 <div id="modal-ledger" class="modal hidden">
   <div class="modal-box wide">
     <h3>🏆 Final ledger</h3>
