@@ -33,6 +33,7 @@ input { font: inherit; }
   width: min(420px, 100%); background: var(--panel);
   border: 1px solid var(--line); border-radius: 18px; padding: 28px 22px;
   box-shadow: 0 30px 80px rgba(0,0,0,.6);
+  max-height: calc(100dvh - 32px); overflow-y: auto;
 }
 .logo { font-size: 26px; font-weight: 800; text-align: center; letter-spacing: .5px; }
 .logo span { background: linear-gradient(90deg,#ffcc4d,#e1a63e); -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -41,6 +42,7 @@ input { font: inherit; }
 .field span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
 .field input { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: #0d1412; color: var(--text); font-size: 16px; }
 .field input:focus { outline: 2px solid var(--gold); border-color: transparent; }
+.hint-inline { color: var(--muted); font-size: 12px; margin: -4px 0 12px; }
 .btn {
   padding: 12px 16px; border-radius: 10px; border: 1px solid var(--line);
   background: var(--panel-2); color: var(--text); font-weight: 600;
@@ -72,7 +74,7 @@ input { font: inherit; }
 .lobby-foot { margin-top: 22px; padding-top: 16px; border-top: 1px dashed var(--line); color: var(--muted); font-size: 11px; text-align: center; }
 .lobby-foot code { background: #0d1412; padding: 1px 5px; border-radius: 4px; color: var(--gold); }
 
-/* ══════════ GAME LAYOUT (desktop grid) ══════════ */
+/* ══════════ GAME LAYOUT ══════════ */
 #game {
   display: grid;
   grid-template-columns: 1fr 340px;
@@ -112,8 +114,7 @@ main    { grid-area: table; }
   font-size: 16px; color: var(--text); background: var(--panel-2);
   border-radius: 10px; border: 1px solid var(--line);
 }
-#btn-menu { display: none; }
-#btn-rebuy-top { display: none; }
+#btn-menu, #btn-rebuy-top { display: none; }
 
 main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidden; }
 
@@ -126,11 +127,21 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   box-shadow: inset 0 0 60px rgba(0,0,0,.5), 0 0 0 3px #2b180a, 0 20px 60px rgba(0,0,0,.5);
   display: grid; place-items: center; overflow: hidden;
 }
+#table-center {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  z-index: 1;
+}
 #pot-display {
-  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
-  background: rgba(0,0,0,.6); padding: 5px 12px; border-radius: 999px;
-  font-weight: 700; color: var(--gold); font-size: 13px; letter-spacing: .5px;
+  background: rgba(20, 12, 0, .85);
+  border: 1px solid rgba(255,204,77,.35);
+  padding: 8px 22px;
+  border-radius: 999px;
+  font-weight: 800;
+  color: var(--gold);
+  font-size: 17px;
+  letter-spacing: .5px;
   white-space: nowrap;
+  box-shadow: 0 6px 22px rgba(0,0,0,.55);
 }
 #board-area { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .cards { display: flex; gap: 5px; }
@@ -150,17 +161,19 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
 .board-label { font-size: 10px; color: var(--muted); text-align: center; margin-bottom: 2px; }
 #board2-wrap { margin-top: 4px; }
 
-#seats { position: absolute; inset: 0; pointer-events: none; }
+#seats { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .seat {
   position: absolute; width: 124px; transform: translate(-50%, -50%);
   pointer-events: auto;
   background: rgba(10,20,16,.94); border: 2px solid var(--line);
-  border-radius: 12px; padding: 6px; text-align: center;
+  border-radius: 12px; padding: 6px 6px 8px; text-align: center;
   font-size: 12px;
-  transition: box-shadow .2s;
+  transition: box-shadow .2s, opacity .3s;
+  overflow: hidden;
 }
 .seat.turn { border-color: var(--gold); box-shadow: 0 0 22px rgba(255,204,77,.7); }
-.seat.folded { opacity: .45; }
+.seat.folded { opacity: .35; filter: grayscale(.6); }
+.seat.folded .hole .card { opacity: .5; }
 .seat.admin::after {
   content: '👑'; position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
   font-size: 14px;
@@ -175,10 +188,28 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%);
   background: var(--gold); color: #221800; padding: 2px 8px; border-radius: 999px;
   font-weight: 800; font-size: 11px; white-space: nowrap;
+  z-index: 3;
 }
 .seat .badge { position: absolute; top: 4px; right: 6px; font-size: 9px; color: var(--muted); letter-spacing: 1px; font-weight: 700; }
 .seat .last { font-size: 10px; color: var(--muted); margin-top: 2px; min-height: 12px; }
 .seat .offline { color: var(--red); font-size: 10px; }
+
+/* Timer bar on active seat */
+.seat .timer-bar {
+  position: absolute;
+  left: 0; bottom: 0;
+  height: 3px;
+  width: 100%;
+  background: linear-gradient(90deg, #ffd35c, #ff8a1f);
+  transform-origin: left center;
+  animation: timerCountdown linear forwards;
+  box-shadow: 0 0 8px rgba(255,204,77,.6);
+}
+@keyframes timerCountdown {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+#seats.paused .seat .timer-bar { animation-play-state: paused; }
 
 /* ── Side panel ── */
 #panel {
@@ -273,8 +304,7 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   flex: 1; min-width: 70px; padding: 11px; border-radius: 8px;
   border: 1px solid var(--line); background: #0d1412; color: var(--text);
   text-align: center; font-weight: 700;
-  -moz-appearance: textfield;
-  appearance: textfield;
+  -moz-appearance: textfield; appearance: textfield;
 }
 #actions .raise-group input::-webkit-outer-spin-button,
 #actions .raise-group input::-webkit-inner-spin-button {
@@ -310,6 +340,15 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
 .approve-line { font-size: 15px; margin: 8px 0; }
 .approve-line .amt { color: var(--gold); font-size: 20px; font-weight: 800; }
 
+/* Share modal */
+.share-link { margin: 12px 0 4px; }
+.share-link input {
+  width: 100%; padding: 12px 14px; border-radius: 10px;
+  border: 1px solid var(--line); background: #0d1412; color: var(--gold);
+  font-family: ui-monospace, Menlo, monospace; font-size: 13px;
+  text-align: center;
+}
+
 #toasts {
   position: fixed; top: calc(58px + env(safe-area-inset-top,0px));
   right: 12px; left: 12px; z-index: 300;
@@ -335,6 +374,7 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
 @media (max-width: 880px) {
   #game {
     grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr auto;
     grid-template-areas:
       "topbar"
       "table"
@@ -369,8 +409,11 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   .card .s { font-size: 20px; }
   .cards { gap: 4px; }
 
+  #pot-display { font-size: 14px; padding: 6px 16px; }
+  #table-center { gap: 10px; }
+
   .seat {
-    width: 90px; padding: 5px 4px;
+    width: 90px; padding: 5px 4px 7px;
     border-radius: 10px;
     font-size: 11px;
   }
@@ -383,14 +426,20 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   .seat .badge { font-size: 8px; top: 3px; right: 4px; }
   .seat .last { font-size: 9px; }
 
-  #pot-display { top: 6px; font-size: 12px; padding: 4px 10px; }
-
   .hide-sm { display: none; }
 
-  #actions { padding: 8px 8px calc(8px + var(--safe-b)); gap: 5px; min-height: 56px; }
-  #actions .btn { min-width: 62px; padding: 11px 8px; font-size: 13px; flex: 1 1 0; }
+  /* Action bar always at the bottom, always visible */
+  #actions {
+    padding: 8px 8px calc(8px + var(--safe-b));
+    gap: 5px;
+    min-height: 58px;
+    flex-wrap: wrap;
+    align-content: center;
+  }
+  #actions .btn { min-width: 58px; padding: 11px 8px; font-size: 13px; flex: 1 1 0; }
   #actions .raise-group { flex: 1 1 100%; order: -1; max-width: none; }
   #actions .raise-group input { padding: 10px; font-size: 14px; }
+  #actions .hint { font-size: 12px; }
 
   #toasts { left: auto; right: 10px; }
 
@@ -404,4 +453,5 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   .card { width: 34px; height: 50px; }
   .card .s { font-size: 17px; }
   #actions .btn { font-size: 12px; padding: 10px 6px; }
+  #pot-display { font-size: 13px; padding: 5px 12px; }
 }
