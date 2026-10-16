@@ -11,6 +11,7 @@
   --red: #e15a4b;
   --green: #2fbf71;
   --safe-b: env(safe-area-inset-bottom, 0px);
+  --actions-h: 66px;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; height: 100%; overscroll-behavior: none; }
@@ -74,7 +75,7 @@ input { font: inherit; }
 .lobby-foot { margin-top: 22px; padding-top: 16px; border-top: 1px dashed var(--line); color: var(--muted); font-size: 11px; text-align: center; }
 .lobby-foot code { background: #0d1412; padding: 1px 5px; border-radius: 4px; color: var(--gold); }
 
-/* ══════════ GAME LAYOUT ══════════ */
+/* ══════════ GAME LAYOUT (desktop grid) ══════════ */
 #game {
   display: grid;
   grid-template-columns: 1fr 340px;
@@ -128,7 +129,7 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   display: grid; place-items: center; overflow: hidden;
 }
 #table-center {
-  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
   z-index: 1;
 }
 #pot-display {
@@ -161,6 +162,21 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
 .board-label { font-size: 10px; color: var(--muted); text-align: center; margin-bottom: 2px; }
 #board2-wrap { margin-top: 4px; }
 
+/* Hand strength badge (yours) */
+#hand-strength {
+  background: linear-gradient(180deg, rgba(255,204,77,.18), rgba(255,204,77,.06));
+  border: 1px solid rgba(255,204,77,.5);
+  color: var(--gold);
+  padding: 5px 14px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0,0,0,.35);
+}
+
 #seats { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .seat {
   position: absolute; width: 124px; transform: translate(-50%, -50%);
@@ -168,16 +184,24 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   background: rgba(10,20,16,.94); border: 2px solid var(--line);
   border-radius: 12px; padding: 6px 6px 8px; text-align: center;
   font-size: 12px;
-  transition: box-shadow .2s, opacity .3s;
+  transition: box-shadow .2s, opacity .35s, filter .35s;
   overflow: hidden;
 }
 .seat.turn { border-color: var(--gold); box-shadow: 0 0 22px rgba(255,204,77,.7); }
-.seat.folded { opacity: .35; filter: grayscale(.6); }
-.seat.folded .hole .card { opacity: .5; }
-.seat.admin::after {
-  content: '👑'; position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
-  font-size: 14px;
+.seat.folded { opacity: .28; filter: grayscale(.75); }
+.seat.folded .hole .card { opacity: .55; }
+.seat.winner { border-color: var(--green); box-shadow: 0 0 24px rgba(47,191,113,.65); }
+.seat.winner::before {
+  content: '🏆'; position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+  font-size: 15px;
 }
+.seat.admin::after {
+  content: '👑'; position: absolute; top: -12px; right: 6px;
+  font-size: 13px;
+}
+.seat.winner.admin::before { content: '🏆'; }
+.seat.winner.admin::after  { content: '👑'; }
+
 .seat .name { font-weight: 700; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .seat .chips { color: var(--gold); font-weight: 800; font-size: 13px; margin: 1px 0; }
 .seat .hole { display: flex; justify-content: center; gap: 3px; margin-top: 3px; }
@@ -190,11 +214,18 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   font-weight: 800; font-size: 11px; white-space: nowrap;
   z-index: 3;
 }
-.seat .badge { position: absolute; top: 4px; right: 6px; font-size: 9px; color: var(--muted); letter-spacing: 1px; font-weight: 700; }
+.seat .badge { position: absolute; top: 4px; left: 6px; font-size: 9px; color: var(--muted); letter-spacing: 1px; font-weight: 700; }
 .seat .last { font-size: 10px; color: var(--muted); margin-top: 2px; min-height: 12px; }
 .seat .offline { color: var(--red); font-size: 10px; }
+.seat .seat-rank {
+  margin-top: 3px; font-size: 9px; letter-spacing: .5px;
+  color: var(--gold); font-weight: 800; text-transform: uppercase;
+  background: rgba(255,204,77,.1);
+  border-radius: 999px;
+  padding: 1px 6px;
+  display: inline-block;
+}
 
-/* Timer bar on active seat */
 .seat .timer-bar {
   position: absolute;
   left: 0; bottom: 0;
@@ -205,10 +236,7 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   animation: timerCountdown linear forwards;
   box-shadow: 0 0 8px rgba(255,204,77,.6);
 }
-@keyframes timerCountdown {
-  from { transform: scaleX(1); }
-  to { transform: scaleX(0); }
-}
+@keyframes timerCountdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 #seats.paused .seat .timer-bar { animation-play-state: paused; }
 
 /* ── Side panel ── */
@@ -307,10 +335,18 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   -moz-appearance: textfield; appearance: textfield;
 }
 #actions .raise-group input::-webkit-outer-spin-button,
-#actions .raise-group input::-webkit-inner-spin-button {
-  -webkit-appearance: none; margin: 0;
-}
+#actions .raise-group input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 #actions .hint { color: var(--muted); font-size: 13px; text-align: center; width: 100%; }
+#actions .act-info {
+  font-size: 11px; color: var(--muted); font-weight: 700;
+  padding: 4px 10px; border-radius: 999px; background: var(--panel-2);
+  border: 1px solid var(--line);
+  text-transform: uppercase; letter-spacing: .5px;
+}
+#actions .act-info b { color: var(--gold); }
+
+/* Reveal-hand button (shown only during showdown) */
+#actions .reveal-btn { background: linear-gradient(180deg,#4b9ae1,#2e6fc0); color: #fff; border: none; }
 
 /* ── Modals ── */
 .modal {
@@ -340,7 +376,6 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
 .approve-line { font-size: 15px; margin: 8px 0; }
 .approve-line .amt { color: var(--gold); font-size: 20px; font-weight: 800; }
 
-/* Share modal */
 .share-link { margin: 12px 0 4px; }
 .share-link input {
   width: 100%; padding: 12px 14px; border-radius: 10px;
@@ -372,15 +407,26 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
 
 /* ══════════ MOBILE (≤ 880px) ══════════ */
 @media (max-width: 880px) {
+  /* Switch to flex so the action bar can be pinned */
   #game {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr auto;
-    grid-template-areas:
-      "topbar"
-      "table"
-      "actions";
+    display: flex;
+    flex-direction: column;
+    height: 100svh;
+    height: 100dvh;
+    height: 100vh;
   }
 
+  #topbar { flex: 0 0 auto; }
+
+  main {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 6px;
+    /* reserve room for the fixed action bar */
+    padding-bottom: calc(var(--actions-h) + var(--safe-b) + 6px);
+  }
+
+  /* Turn the panel into an off-canvas drawer */
   #panel {
     position: fixed;
     top: 0; right: 0; bottom: 0;
@@ -393,6 +439,7 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
     transition: transform .28s cubic-bezier(.3,.9,.4,1);
     box-shadow: -20px 0 60px rgba(0,0,0,.6);
     padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   #panel.open { transform: translateX(0); }
   .drawer-head { display: flex; }
@@ -401,7 +448,6 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   #btn-menu { display: flex; }
   #btn-rebuy-top { display: flex; }
 
-  main { padding: 6px; }
   #felt { border-width: 6px; border-radius: 34% / 26%; }
 
   .card { width: 40px; height: 58px; font-size: 15px; }
@@ -411,9 +457,10 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
 
   #pot-display { font-size: 14px; padding: 6px 16px; }
   #table-center { gap: 10px; }
+  #hand-strength { font-size: 11px; padding: 4px 12px; }
 
   .seat {
-    width: 90px; padding: 5px 4px 7px;
+    width: 92px; padding: 5px 4px 7px;
     border-radius: 10px;
     font-size: 11px;
   }
@@ -423,25 +470,36 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   .seat .hole .card .s { font-size: 11px; }
   .seat .hole .card .r { font-size: 7px; top: 1px; left: 2px; }
   .seat .bet { font-size: 10px; padding: 1px 6px; bottom: -18px; }
-  .seat .badge { font-size: 8px; top: 3px; right: 4px; }
+  .seat .badge { font-size: 8px; top: 3px; left: 4px; }
   .seat .last { font-size: 9px; }
+  .seat .seat-rank { font-size: 8px; padding: 1px 5px; }
 
   .hide-sm { display: none; }
 
-  /* Action bar always at the bottom, always visible */
+  /* ── Action bar pinned to bottom of viewport ── */
   #actions {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 40;
     padding: 8px 8px calc(8px + var(--safe-b));
     gap: 5px;
-    min-height: 58px;
+    min-height: var(--actions-h);
     flex-wrap: wrap;
     align-content: center;
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -6px 20px rgba(0,0,0,.5);
+    background: var(--panel);
   }
-  #actions .btn { min-width: 58px; padding: 11px 8px; font-size: 13px; flex: 1 1 0; }
+  #actions .btn {
+    min-width: 58px; padding: 11px 8px; font-size: 13px;
+    flex: 1 1 0; flex-basis: 0;
+  }
   #actions .raise-group { flex: 1 1 100%; order: -1; max-width: none; }
   #actions .raise-group input { padding: 10px; font-size: 14px; }
   #actions .hint { font-size: 12px; }
+  #actions .act-info { font-size: 10px; padding: 3px 8px; }
 
-  #toasts { left: auto; right: 10px; }
+  #toasts { left: auto; right: 10px; bottom: calc(var(--actions-h) + var(--safe-b) + 8px); top: auto; }
 
   .modal-box { padding: 18px; }
   .modal-actions .btn { flex: 1 1 30%; min-width: 70px; }
@@ -452,6 +510,6 @@ main { display: flex; padding: 10px; min-height: 0; min-width: 0; overflow: hidd
   .seat .hole .card { width: 20px; height: 28px; }
   .card { width: 34px; height: 50px; }
   .card .s { font-size: 17px; }
-  #actions .btn { font-size: 12px; padding: 10px 6px; }
+  #actions .btn { font-size: 12px; padding: 10px 4px; }
   #pot-display { font-size: 13px; padding: 5px 12px; }
 }
