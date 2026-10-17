@@ -66,7 +66,6 @@ function playWinSound() {
   });
 }
 
-// Sound diff trackers
 let sndBoardLen = 0;
 let sndBoard2Len = 0;
 let sndBets = {};
@@ -107,12 +106,12 @@ function getClientId() {
 const CLIENT_ID = getClientId();
 
 const RANK_SYM = { s:'♠', h:'♥', d:'♦', c:'♣' };
-const cardHTML = (c) => {
+const cardHTML = (c, isNew = false) => {
   if (!c || c === '??') return `<div class="card back"></div>`;
   const r = c[0] === 'T' ? '10' : c[0];
   const s = c[1];
   const red = (s === 'h' || s === 'd') ? 'red' : '';
-  return `<div class="card ${red}"><span class="r">${r}</span><span class="s">${RANK_SYM[s]}</span></div>`;
+  return `<div class="card ${red} ${isNew ? 'new' : ''}"><span class="r">${r}</span><span class="s">${RANK_SYM[s]}</span></div>`;
 };
 
 /* ══════════ LOBBY ══════════ */
@@ -168,7 +167,6 @@ window.addEventListener('load', () => {
     socket.emit('peek_room', { code }, (res) => {
       if (res.ok) {
         if (res.minBuyin > 0) {
-          // auto flow — hide amount, just say min
           $('quick-hint').textContent = `Auto buy-in: ${res.minBuyin} · Blinds ${res.sb}/${res.bb}`;
           $('quick-buyin').value = res.minBuyin;
           $('quick-buyin-wrap').style.display = 'none';
@@ -198,8 +196,13 @@ $('btn-quick-join').onclick = () => {
   const autoBuy = wrap.style.display === 'none';
   const amount = autoBuy ? null : Math.floor(+$('quick-buyin').value);
   if (!autoBuy && (!amount || amount <= 0)) return msg('Enter a valid buy-in amount.');
+  
+  $('btn-quick-join').disabled = true;
   socket.emit('join_room', { code: code.toUpperCase(), name, clientId: CLIENT_ID }, (res) => {
-    if (!res.ok) return msg(res.err);
+    if (!res.ok) {
+      $('btn-quick-join').disabled = false;
+      return msg(res.err);
+    }
     localStorage.setItem('poker_name', name);
     myName = name;
     enterGame(res.code, res.id);
@@ -301,6 +304,8 @@ function maybeShowApprove() {
   $('approve-amount').textContent = next.amount;
   $('approve-sub').textContent = next.isFirst ? 'First buy-in for this player.' : 'Rebuy — no minimum applies.';
   $('modal-approve').dataset.playerId = next.playerId;
+  $('approve-accept').disabled = false;
+  $('approve-reject').disabled = false;
   $('modal-approve').classList.remove('hidden');
 }
 function closeApproveModal() {
@@ -308,11 +313,15 @@ function closeApproveModal() {
   setTimeout(maybeShowApprove, 120);
 }
 $('approve-accept').onclick = () => {
+  $('approve-accept').disabled = true;
+  $('approve-reject').disabled = true;
   const id = $('modal-approve').dataset.playerId;
   socket.emit('admin_resolve_buyin', { playerId: id, approve: true });
   approveQueue.shift(); closeApproveModal();
 };
 $('approve-reject').onclick = () => {
+  $('approve-accept').disabled = true;
+  $('approve-reject').disabled = true;
   const id = $('modal-approve').dataset.playerId;
   socket.emit('admin_resolve_buyin', { playerId: id, approve: false });
   approveQueue.shift(); closeApproveModal();
@@ -368,19 +377,28 @@ function renderTableMessage() {
   }
 }
 
+let lastPot = 0;
 function renderBoard() {
-  $('board').innerHTML = S.board.map(cardHTML).join('');
+  const isNewCard = (arr, i) => i === arr.length - 1;
+  $('board').innerHTML = S.board.map((c, i) => cardHTML(c, isNewCard(S.board, i))).join('');
   if (S.board2 && S.board2.length) {
     $('board2-wrap').classList.remove('hidden');
-    $('board2').innerHTML = S.board2.map(cardHTML).join('');
+    $('board2').innerHTML = S.board2.map((c, i) => cardHTML(c, isNewCard(S.board2, i))).join('');
   } else {
     $('board2-wrap').classList.add('hidden');
   }
   if (S.pot > 0) {
     $('pot-display').textContent = `POT · ${S.pot}`;
     $('pot-display').classList.remove('hidden');
+    if (S.pot !== lastPot) {
+      $('pot-display').classList.remove('pot-pulse');
+      void $('pot-display').offsetWidth;
+      $('pot-display').classList.add('pot-pulse');
+      lastPot = S.pot;
+    }
   } else {
     $('pot-display').classList.add('hidden');
+    lastPot = 0;
   }
 }
 
@@ -442,7 +460,7 @@ function renderSeats() {
       <div class="badge">${badges.join(' · ')}</div>
       <div class="name">${escapeHTML(p.name)}</div>
       <div class="chips">${p.chips}${winBadge}</div>
-      <div class="hole">${p.hole.map(cardHTML).join('')}</div>
+      <div class="hole">${p.hole.map(c => cardHTML(c)).join('')}</div>
       ${rankLabel ? `<div class="seat-rank">${escapeHTML(rankLabel)}</div>` : ''}
       ${p.bet > 0 ? `<div class="bet">${p.bet}</div>` : ''}
       <div class="last">${p.lastAction || ''}</div>
@@ -551,6 +569,23 @@ function renderActionBar() {
   if (S.phase === 'ended') { bar.innerHTML = '<span class="hint">■ Game has ended.</span>'; return; }
   if (S.paused) { bar.innerHTML = '<span class="hint">⏸ Table paused by admin. Waiting for resume…</span>'; return; }
 
+  if (S.phase === 'rit_vote') {
+    if (!S.ritVotes || !(ME in S.ritVotes)) {
+      bar.innerHTML = '<span class="hint">Players are deciding to run it twice...</span>';
+      return;
+    }
+    const myVote = S.ritVotes[ME];
+    if (myVote === null) {
+      bar.appendChild(el('span', '<span class="act-info">Pot is large — run it twice?</span>'));
+      bar.appendChild(btn('Yes 🔁', () => socket.emit('vote_rit', { agree: true }), 'primary'));
+      bar.appendChild(btn('No', () => socket.emit('vote_rit', { agree: false }), 'danger'));
+    } else {
+      const waiting = Object.values(S.ritVotes).filter(v => v === null).length;
+      bar.innerHTML = `<span class="hint">Waiting for ${waiting} more player(s)...</span>`;
+    }
+    return;
+  }
+
   if (S.phase === 'showdown') {
     if (me && me.atShowdown && !me.revealed) {
       const b = document.createElement('button');
@@ -563,10 +598,8 @@ function renderActionBar() {
     }
     return;
   }
-  if (S.phase === 'dealing') {
-    bar.innerHTML = '<span class="hint">Dealing…</span>';
-    return;
-  }
+  if (S.phase === 'dealing') { bar.innerHTML = '<span class="hint">Dealing…</span>'; return; }
+
   if (S.phase === 'waiting') {
     if (S.handNumber === 0 && S.adminId === ME) {
       const b = document.createElement('button');
@@ -581,6 +614,7 @@ function renderActionBar() {
     }
     return;
   }
+
   if (!me || !me.inHand || me.folded || me.allIn) {
     bar.innerHTML = '<span class="hint">Waiting…</span>';
     return;
@@ -604,24 +638,32 @@ function renderActionBar() {
     bar.appendChild(btn(`Call ${callAmt}`, () => socket.emit('player_action', { type: 'call' })));
   }
 
+  // Determine if this is a Bet or a Raise
+  const isPostflop = S.phase !== 'preflop';
+  const isUnopened = S.currentBet === 0;
+  const raiseLabel = (isPostflop && isUnopened) ? 'Bet' : 'Raise';
+  const defaultVal = (isPostflop && isUnopened) ? S.minRaise : Math.min(minRaiseTo, maxRaiseTo);
+
   const rg = document.createElement('div');
   rg.className = 'raise-group';
   const input = document.createElement('input');
   input.type = 'number'; input.inputMode = 'numeric'; input.step = 1;
-  input.min = minRaiseTo; input.max = maxRaiseTo;
-  input.value = Math.min(minRaiseTo, maxRaiseTo);
+  input.min = isUnopened ? S.minRaise : minRaiseTo;
+  input.max = maxRaiseTo;
+  input.value = defaultVal;
   input.addEventListener('input', () => input.value = input.value.replace(/[^\d]/g, ''));
   input.addEventListener('blur', () => {
-    let v = Math.floor(+input.value) || minRaiseTo;
-    v = Math.max(minRaiseTo, Math.min(maxRaiseTo, v));
+    let v = Math.floor(+input.value) || defaultVal;
+    v = Math.max(input.min, Math.min(maxRaiseTo, v));
     input.value = v;
   });
+
   const raiseBtn = document.createElement('button');
   raiseBtn.className = 'btn green';
-  raiseBtn.textContent = 'Raise';
+  raiseBtn.textContent = raiseLabel;
   raiseBtn.onclick = () => {
-    let v = Math.floor(+input.value) || minRaiseTo;
-    v = Math.max(minRaiseTo, Math.min(maxRaiseTo, v));
+    let v = Math.floor(+input.value) || defaultVal;
+    v = Math.max(input.min, Math.min(maxRaiseTo, v));
     socket.emit('player_action', { type: 'raise', amount: v });
   };
   rg.appendChild(input); rg.appendChild(raiseBtn);
@@ -648,19 +690,16 @@ function checkBalanceModals() {
   const buyinOpen = !$('modal-buyin').classList.contains('hidden');
   const oocOpen = !$('modal-outofchips').classList.contains('hidden');
 
-  // Player has chips — reset flags, hide the OOC modal
   if (me.chips > 0) {
-    promptedFirstBuyin = false;
-    promptedBust = false;
+    promptedFirstBuyin = false; promptedBust = false;
     if (oocOpen) $('modal-outofchips').classList.add('hidden');
     return;
   }
 
-  if (me.pendingBuyin) return; // waiting for approval
-  if (me.away) return;         // spectating / away
+  if (me.pendingBuyin || me.away) return;
 
-  // First-time buy-in prompt (only when minBuyin is not set)
   if (me.buyIns.length === 0) {
+    if (S.settings.minBuyin > 0) return; // ★ SERVER AUTO-REQUESTS MIN BUYIN
     if (!promptedFirstBuyin && !buyinOpen && !oocOpen) {
       promptedFirstBuyin = true;
       openBuyin();
@@ -668,7 +707,6 @@ function checkBalanceModals() {
     return;
   }
 
-  // Busted out
   if (me.buyIns.length > 0) {
     if (!promptedBust && !buyinOpen && !oocOpen) {
       promptedBust = true;
@@ -677,13 +715,10 @@ function checkBalanceModals() {
   }
 }
 
-function openOutOfChips() {
-  $('modal-outofchips').classList.remove('hidden');
-}
+function openOutOfChips() { $('modal-outofchips').classList.remove('hidden'); }
 $('ooc-rebuy').onclick = () => {
   $('modal-outofchips').classList.add('hidden');
-  promptedBust = false;
-  openBuyin();
+  promptedBust = false; openBuyin();
 };
 $('ooc-spectate').onclick = () => {
   $('modal-outofchips').classList.add('hidden');
@@ -720,12 +755,14 @@ function openBuyin() {
   $('buyin-quick').innerHTML = amounts.map(a => `<button data-a="${a}">${a}</button>`).join('');
   $('buyin-quick').querySelectorAll('button').forEach(b => b.onclick = () => $('buyin-amount').value = b.dataset.a);
   $('buyin-amount').value = amounts[0];
+  $('buyin-send').disabled = false;
   $('modal-buyin').classList.remove('hidden');
 }
 $('buyin-cancel').onclick = () => $('modal-buyin').classList.add('hidden');
 $('buyin-send').onclick = () => {
   const amt = Math.floor(+$('buyin-amount').value);
   if (!amt || amt <= 0) return toast('Enter a whole-number amount');
+  $('buyin-send').disabled = true;
   socket.emit('request_buyin', { amount: amt });
   $('modal-buyin').classList.add('hidden');
   toast('Buy-in requested — waiting for admin.');
