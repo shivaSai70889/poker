@@ -1,4 +1,4 @@
-const express = require('express');
+const express = require('http');
 const http = require('http');
 const { Server } = require('socket.io');
 const crypto = require('crypto');
@@ -102,7 +102,6 @@ class Room {
     this.code = code;
     this.adminId = null;
     this.players = new Map();
-    // minBuyin 0 means "not set → ask player"
     this.settings = { bb: 2, minBuyin: 0, ante: 0, timer: 30, maxSeats: 10 };
     this.paused = false;
     this.phase = 'waiting';
@@ -129,6 +128,8 @@ class Room {
     this.wentToShowdown = false;
     this.lastWinners = [];
     this.winSummary = '';
+    this.ritVotes = null;
+    this.ritVoteTimer = null;
   }
   get sb() { return Math.floor(this.settings.bb / 2); }
   get bb() { return this.settings.bb; }
@@ -164,7 +165,6 @@ function clearDealTimers(room) {
 }
 function scheduleDeal(room, fn, delay) {
   const t = setTimeout(() => {
-    // remove from list once fired
     room.dealTimers = room.dealTimers.filter(x => x !== t);
     fn();
   }, delay);
@@ -243,7 +243,8 @@ function roomSnapshot(room, viewerId) {
     players, log: room.log, deckHash: room.deckHash,
     wentToShowdown: room.wentToShowdown,
     winners: [...winners],
-    winSummary: room.winSummary || ''
+    winSummary: room.winSummary || '',
+    ritVotes: room.ritVotes || {}
   };
 }
 
@@ -282,7 +283,6 @@ function pauseTurnTimer(room) {
 }
 function resumeTurnTimer(room) {
   if (!room.turnId) return;
-  // If the current player's timer was exhausted or never started, give them the full duration
   if (room.turnTimerDuration <= 0) room.turnTimerDuration = room.settings.timer * 1000;
   room.turnTimerStartedAt = Date.now();
   room.turnTimer = setTimeout(() => {
@@ -341,6 +341,7 @@ function startNewHand(room) {
   room.runItTwiceFlag = false;
   room.lastWinners = [];
   room.winSummary = '';
+  room.ritVotes = null;
 
   for (const p of room.players.values()) {
     p.hole = []; p.folded = false; p.allIn = false;
@@ -466,7 +467,6 @@ function endBettingRound(room) {
   room.turnTimer = null;
 
   if (room.phase === 'preflop') {
-    // Deal flop: 3 cards with 500ms delay each
     room.phase = 'dealing';
     broadcast(room);
     const c1 = room.deck.pop(), c2 = room.deck.pop(), c3 = room.deck.pop();
@@ -497,7 +497,11 @@ function endBettingRound(room) {
       scheduleDeal(room, () => startPostflopBetting(room, 'river'), 100);
     }, 1000);
   } else if (room.phase === 'river') {
-    return showdown(room);
+    if (room.settings.minBuyin > 0 && room.livePot() >= room.settings.minBuyin && room.notFolded().length >= 2) {
+      initiateRitVote(room);
+    } else {
+      showdown(room);
+    }
   }
 }
 
@@ -515,15 +519,44 @@ function startPostflopBetting(room, nextPhase) {
 
 function runOutBoard(room) {
   while (room.board.length < 5) room.board.push(room.deck.pop());
-  if (room.runItTwiceFlag && room.notFolded().length >= 2) {
-    room.board2 = [];
-    while (room.board2.length < 5) room.board2.push(room.deck.pop());
-    systemMsg(room, '🔁 Running it twice.');
+  if (room.settings.minBuyin > 0 && room.livePot() >= room.settings.minBuyin && room.notFolded().length >= 2) {
+    initiateRitVote(room);
+  } else {
+    showdown(room);
   }
+}
+
+/* ─────────────── RUN IT TWICE VOTING ─────────────── */
+function initiateRitVote(room) {
+  room.phase = 'rit_vote';
+  room.ritVotes = {};
+  for (const p of room.notFolded()) room.ritVotes[p.id] = null;
+  broadcast(room);
+  systemMsg(room, 'Pot is large. Deciding whether to run it twice...');
+
+  clearTimeout(room.ritVoteTimer);
+  room.ritVoteTimer = setTimeout(() => {
+    if (room.phase !== 'rit_vote') return;
+    for (const id in room.ritVotes) if (room.ritVotes[id] === null) room.ritVotes[id] = false;
+    resolveRitVote(room);
+  }, 15000);
+}
+
+function resolveRitVote(room) {
+  clearTimeout(room.ritVoteTimer);
+  const allYes = Object.values(room.ritVotes).every(v => v === true);
+  room.runItTwiceFlag = allYes;
+  if (allYes) systemMsg(room, '🔁 All agreed — running it twice.');
+  else systemMsg(room, '❌ Run it twice declined.');
   showdown(room);
 }
 
 function showdown(room) {
+  if (room.runItTwiceFlag && room.notFolded().length >= 2 && !room.board2.length) {
+    room.board2 = [];
+    while (room.board2.length < 5) room.board2.push(room.deck.pop());
+  }
+
   room.phase = 'showdown';
   room.wentToShowdown = true;
   const alive = room.notFolded();
@@ -567,7 +600,6 @@ function showdown(room) {
     }
   }
 
-  // Apply payouts and record net win per player
   for (const [id, amt] of Object.entries(payouts)) {
     const p = room.players.get(id);
     if (p) p.chips += amt;
@@ -588,7 +620,6 @@ function showdown(room) {
     p.lastWin = payout > 0 ? (payout - p.handContrib) : 0;
   }
 
-  // Build a human-readable win summary
   const winNames = winnerIds.map(id => room.players.get(id).name);
   if (winNames.length === 1) {
     const w = room.players.get(winnerIds[0]);
@@ -688,10 +719,17 @@ function makePlayer(id, socketId, name, clientId) {
 
 function requestBuyin(room, player, amount) {
   amount = Math.max(1, Math.floor(amount));
+
+  // ★ STRICT LOCK: Prevent duplicate pending requests
+  if (player.pendingBuyin != null) {
+    return { ok: false, err: 'You already have a pending buy-in request.' };
+  }
+
   const isFirst = player.buyIns.length === 0;
   if (isFirst && room.settings.minBuyin > 0 && amount < room.settings.minBuyin) {
     return { ok: false, err: `Min initial buy-in is ${room.settings.minBuyin}.` };
   }
+
   player.pendingBuyin = amount;
   if (player.id === room.adminId) {
     player.chips += amount;
@@ -783,7 +821,7 @@ io.on('connection', socket => {
     myRoom = room;
     socket.join(code);
 
-    // ★ Auto sit-in: if min buy-in set, request it on their behalf
+    // Only auto-request if there is a set minimum. The client will not prompt them.
     if (room.settings.minBuyin > 0 && p.buyIns.length === 0 && !p.pendingBuyin) {
       requestBuyin(room, p, room.settings.minBuyin);
     }
@@ -798,7 +836,6 @@ io.on('connection', socket => {
     if (!p) return;
     const res = requestBuyin(myRoom, p, amount);
     if (!res.ok) return socket.emit('toast', res.err);
-    // Coming back from a bust — clear away/out
     if (p.chips === 0 && p.away) p.away = false;
     broadcast(myRoom);
   });
@@ -886,6 +923,16 @@ io.on('connection', socket => {
     handleAction(myRoom, myId, action);
   });
 
+  socket.on('vote_rit', ({ agree }) => {
+    if (!myRoom || !myId) return;
+    if (myRoom.phase !== 'rit_vote') return;
+    if (!(myId in myRoom.ritVotes)) return;
+    myRoom.ritVotes[myId] = agree;
+    const allVoted = Object.values(myRoom.ritVotes).every(v => v !== null);
+    if (allVoted) resolveRitVote(myRoom);
+    else broadcast(myRoom);
+  });
+
   socket.on('reveal_hand', () => {
     if (!myRoom || !myId) return;
     if (myRoom.phase !== 'showdown') return;
@@ -905,7 +952,6 @@ io.on('connection', socket => {
     broadcast(myRoom);
   });
 
-  // Explicit spectate action from busted-player modal
   socket.on('spectate', () => {
     if (!myRoom || !myId) return;
     const p = myRoom.players.get(myId);
