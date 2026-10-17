@@ -1,4 +1,4 @@
-const express = require('http');
+const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const crypto = require('crypto');
@@ -720,7 +720,6 @@ function makePlayer(id, socketId, name, clientId) {
 function requestBuyin(room, player, amount) {
   amount = Math.max(1, Math.floor(amount));
 
-  // ★ STRICT LOCK: Prevent duplicate pending requests
   if (player.pendingBuyin != null) {
     return { ok: false, err: 'You already have a pending buy-in request.' };
   }
@@ -821,7 +820,6 @@ io.on('connection', socket => {
     myRoom = room;
     socket.join(code);
 
-    // Only auto-request if there is a set minimum. The client will not prompt them.
     if (room.settings.minBuyin > 0 && p.buyIns.length === 0 && !p.pendingBuyin) {
       requestBuyin(room, p, room.settings.minBuyin);
     }
