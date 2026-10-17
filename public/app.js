@@ -219,6 +219,11 @@ $('btn-quick-cancel').onclick = () => {
 
 /* ══════════ STATE ══════════ */
 socket.on('state', (state) => {
+  if (S && state.handNumber !== S.handNumber) {
+    // Reset board length trackers on new hand to ensure new card animations trigger properly
+    prevBoardLen = 0;
+    prevBoard2Len = 0;
+  }
   S = state;
   if (!ME && myName) {
     const me = state.players.find(p => p.name === myName);
@@ -290,6 +295,20 @@ $('btn-share').onclick = async () => {
     else { await navigator.clipboard.writeText(url); toast('Invite link copied!'); }
   } catch {
     try { await navigator.clipboard.writeText(url); toast('Invite link copied!'); } catch {}
+  }
+};
+
+/* ══════════ FULLSCREEN ══════════ */
+$('btn-fullscreen').onclick = () => {
+  const elem = document.documentElement;
+  if (!document.fullscreenElement) {
+    if (elem.requestFullscreen) elem.requestFullscreen();
+    else if (elem.webkitRequestFullscreen) elem.webkitRequestFullscreen();
+    else if (elem.msRequestFullscreen) elem.msRequestFullscreen();
+  } else {
+    if (document.exitFullscreen) document.exitFullscreen();
+    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    else if (document.msExitFullscreen) document.msExitFullscreen();
   }
 };
 
@@ -378,15 +397,25 @@ function renderTableMessage() {
 }
 
 let lastPot = 0;
+let prevBoardLen = 0;
+let prevBoard2Len = 0;
+
 function renderBoard() {
-  const isNewCard = (arr, i) => i === arr.length - 1;
-  $('board').innerHTML = S.board.map((c, i) => cardHTML(c, isNewCard(S.board, i))).join('');
+  const isNew1 = S.board.length > prevBoardLen;
+  const isNew2 = S.board2 && S.board2.length > prevBoard2Len;
+
+  $('board').innerHTML = S.board.map((c, i) => cardHTML(c, isNew1 && i === S.board.length - 1)).join('');
+  
   if (S.board2 && S.board2.length) {
     $('board2-wrap').classList.remove('hidden');
-    $('board2').innerHTML = S.board2.map((c, i) => cardHTML(c, isNewCard(S.board2, i))).join('');
+    $('board2').innerHTML = S.board2.map((c, i) => cardHTML(c, isNew2 && i === S.board2.length - 1)).join('');
   } else {
     $('board2-wrap').classList.add('hidden');
   }
+
+  prevBoardLen = S.board.length;
+  prevBoard2Len = S.board2 ? S.board2.length : 0;
+
   if (S.pot > 0) {
     $('pot-display').textContent = `POT · ${S.pot}`;
     $('pot-display').classList.remove('hidden');
@@ -638,7 +667,6 @@ function renderActionBar() {
     bar.appendChild(btn(`Call ${callAmt}`, () => socket.emit('player_action', { type: 'call' })));
   }
 
-  // Determine if this is a Bet or a Raise
   const isPostflop = S.phase !== 'preflop';
   const isUnopened = S.currentBet === 0;
   const raiseLabel = (isPostflop && isUnopened) ? 'Bet' : 'Raise';
@@ -699,7 +727,7 @@ function checkBalanceModals() {
   if (me.pendingBuyin || me.away) return;
 
   if (me.buyIns.length === 0) {
-    if (S.settings.minBuyin > 0) return; // ★ SERVER AUTO-REQUESTS MIN BUYIN
+    if (S.settings.minBuyin > 0) return;
     if (!promptedFirstBuyin && !buyinOpen && !oocOpen) {
       promptedFirstBuyin = true;
       openBuyin();
