@@ -470,32 +470,31 @@ function endBettingRound(room) {
     room.phase = 'dealing';
     broadcast(room);
     const c1 = room.deck.pop(), c2 = room.deck.pop(), c3 = room.deck.pop();
-    scheduleDeal(room, () => {
-      room.board.push(c1); broadcast(room);
-      scheduleDeal(room, () => {
-        room.board.push(c2); broadcast(room);
-        scheduleDeal(room, () => {
-          room.board.push(c3); broadcast(room);
-          scheduleDeal(room, () => startPostflopBetting(room, 'flop'), 100);
-        }, 500);
-      }, 500);
-    }, 500);
+    
+    // 0.5s intervals for flop
+    scheduleDeal(room, () => { room.board.push(c1); broadcast(room); }, 500);
+    scheduleDeal(room, () => { room.board.push(c2); broadcast(room); }, 1000);
+    scheduleDeal(room, () => { room.board.push(c3); broadcast(room); }, 1500);
+    scheduleDeal(room, () => startPostflopBetting(room, 'flop'), 1800);
+
   } else if (room.phase === 'flop') {
     room.phase = 'dealing';
     broadcast(room);
     const c = room.deck.pop();
-    scheduleDeal(room, () => {
-      room.board.push(c); broadcast(room);
-      scheduleDeal(room, () => startPostflopBetting(room, 'turn'), 100);
-    }, 1000);
+    
+    // 1s delay for turn
+    scheduleDeal(room, () => { room.board.push(c); broadcast(room); }, 1000);
+    scheduleDeal(room, () => startPostflopBetting(room, 'turn'), 1300);
+
   } else if (room.phase === 'turn') {
     room.phase = 'dealing';
     broadcast(room);
     const c = room.deck.pop();
-    scheduleDeal(room, () => {
-      room.board.push(c); broadcast(room);
-      scheduleDeal(room, () => startPostflopBetting(room, 'river'), 100);
-    }, 1000);
+    
+    // 1s delay for river
+    scheduleDeal(room, () => { room.board.push(c); broadcast(room); }, 1000);
+    scheduleDeal(room, () => startPostflopBetting(room, 'river'), 1300);
+
   } else if (room.phase === 'river') {
     if (room.settings.minBuyin > 0 && room.livePot() >= room.settings.minBuyin && room.notFolded().length >= 2) {
       initiateRitVote(room);
